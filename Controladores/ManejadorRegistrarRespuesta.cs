@@ -1,3 +1,4 @@
+using PPAI;
 using PPAI_Revisiones.Boundary;
 using PPAI_Revisiones.Modelos;
 using System;
@@ -113,7 +114,10 @@ namespace PPAI_Revisiones.Controladores
         private string GenerarSismograma()
         {
             Console.WriteLine("[Manejador] → GenerarSismograma() ejecutado (Extensión CU)");
-            return "[Simulación] Sismograma generado por estación.";
+
+            // <<include>> al caso de uso extendido
+            var extensionCU = new CU_GenerarSismograma();
+            return extensionCU.Ejecutar(); // delega la generación del sismograma
         }
 
         public void HabilitarOpcionVisualizarMapa(PantallaNuevaRevision pantalla)
