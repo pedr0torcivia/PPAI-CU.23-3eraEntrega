@@ -11,18 +11,18 @@ namespace PPAI_Revisiones.Modelos.Estados
         // rechazar(cambiosEstado, es, fechaHoraActual, responsable)
         public override void rechazar(
             List<CambioDeEstado> cambiosEstado,
-            EventoSismico es,
+            EventoSismico ctx,
             DateTime fechaHoraActual,
             Empleado responsable)
         {
-            // 1️⃣ Buscar y cerrar cambio abierto
+            // 1️ Buscar y cerrar cambio abierto
             var abierto = BuscarCambioAbierto(cambiosEstado);
             abierto?.SetFechaHoraFin(fechaHoraActual);
 
-            // 2️⃣ Crear nuevo estado Rechazado
+            // 2️ Crear nuevo estado Rechazado
             var nuevoEstado = new Rechazado();
 
-            // 3️⃣ Crear CE y agregarlo
+            // 3️ Crear CE y agregarlo
             var ce = new CambioDeEstado
             {
                 EstadoActual = nuevoEstado,
@@ -30,10 +30,10 @@ namespace PPAI_Revisiones.Modelos.Estados
                 FechaHoraFin = null,
                 Responsable = responsable
             };
-            cambiosEstado.Add(ce);
 
-            // 4️⃣ Actualizar estado del evento
-            es.SetEstado(nuevoEstado);
+            // 4️ Actualizar estado del evento
+            ctx.AgregarCambioEstado(ce);
+            ctx.SetEstado(nuevoEstado);
         }
 
         private static CambioDeEstado BuscarCambioAbierto(List<CambioDeEstado> cambios)

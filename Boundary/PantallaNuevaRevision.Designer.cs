@@ -16,6 +16,7 @@ namespace PPAI_Revisiones.Boundary
             gridEventos = new System.Windows.Forms.DataGridView();
             txtDetalleEvento = new System.Windows.Forms.TextBox();
             txtSismograma = new System.Windows.Forms.TextBox();
+            picSismograma = new System.Windows.Forms.PictureBox();
             grpMapa = new System.Windows.Forms.GroupBox();
             rbtnMapaNo = new System.Windows.Forms.RadioButton();
             rbtnMapaSi = new System.Windows.Forms.RadioButton();
@@ -34,6 +35,7 @@ namespace PPAI_Revisiones.Boundary
             btnIniciarCU = new System.Windows.Forms.Button();
             btnCancelar = new System.Windows.Forms.Button();
             ((System.ComponentModel.ISupportInitialize)gridEventos).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)picSismograma).BeginInit();
             grpMapa.SuspendLayout();
             grpModificarAlcance.SuspendLayout();
             grpModificarMagnitud.SuspendLayout();
@@ -43,7 +45,7 @@ namespace PPAI_Revisiones.Boundary
             // gridEventos
             // 
             gridEventos.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
-            gridEventos.Location = new System.Drawing.Point(12, 12);
+            gridEventos.Location = new System.Drawing.Point(9, 12);
             gridEventos.MultiSelect = false;
             gridEventos.Name = "gridEventos";
             gridEventos.Size = new System.Drawing.Size(619, 150);
@@ -56,17 +58,28 @@ namespace PPAI_Revisiones.Boundary
             txtDetalleEvento.Multiline = true;
             txtDetalleEvento.Name = "txtDetalleEvento";
             txtDetalleEvento.ReadOnly = true;
-            txtDetalleEvento.Size = new System.Drawing.Size(310, 471);
+            txtDetalleEvento.Size = new System.Drawing.Size(310, 467);
             txtDetalleEvento.TabIndex = 3;
             // 
             // txtSismograma
             // 
-            txtSismograma.Location = new System.Drawing.Point(331, 177);
+            txtSismograma.Location = new System.Drawing.Point(22, 12);
             txtSismograma.Multiline = true;
             txtSismograma.Name = "txtSismograma";
             txtSismograma.ReadOnly = true;
-            txtSismograma.Size = new System.Drawing.Size(300, 117);
+            txtSismograma.Size = new System.Drawing.Size(290, 117);
             txtSismograma.TabIndex = 4;
+            // 
+            // picSismograma
+            // 
+            picSismograma.Location = new System.Drawing.Point(328, 168);
+            picSismograma.Name = "picSismograma";
+            picSismograma.Size = new System.Drawing.Size(303, 126);
+            picSismograma.SizeMode = System.Windows.Forms.PictureBoxSizeMode.Zoom;
+            picSismograma.TabIndex = 14;
+            picSismograma.TabStop = false;
+            picSismograma.Visible = false;
+            picSismograma.Click += picSismograma_Click;
             // 
             // grpMapa
             // 
@@ -187,30 +200,33 @@ namespace PPAI_Revisiones.Boundary
             cmbAccion.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             cmbAccion.FormattingEnabled = true;
             cmbAccion.Items.AddRange(new object[] { "Confirmar Evento", "Rechazar Evento", "Solicitar Revisión a Experto" });
-            cmbAccion.Location = new System.Drawing.Point(331, 561);
+            cmbAccion.Location = new System.Drawing.Point(331, 565);
             cmbAccion.Name = "cmbAccion";
-            cmbAccion.Size = new System.Drawing.Size(219, 23);
+            cmbAccion.Size = new System.Drawing.Size(297, 23);
             cmbAccion.TabIndex = 9;
             // 
             // btnConfirmar
             // 
-            btnConfirmar.Location = new System.Drawing.Point(556, 561);
+            btnConfirmar.BackColor = System.Drawing.Color.DodgerBlue;
+            btnConfirmar.ForeColor = System.Drawing.Color.White;
+            btnConfirmar.Location = new System.Drawing.Point(328, 594);
             btnConfirmar.Name = "btnConfirmar";
-            btnConfirmar.Size = new System.Drawing.Size(75, 23);
+            btnConfirmar.Size = new System.Drawing.Size(160, 50);
             btnConfirmar.TabIndex = 10;
             btnConfirmar.Text = "Confirmar Acción";
+            btnConfirmar.UseVisualStyleBackColor = false;
             btnConfirmar.Click += btnConfirmar_Click;
             // 
             // lblMapa
             // 
-            lblMapa.Location = new System.Drawing.Point(331, 353);
+            lblMapa.Location = new System.Drawing.Point(12, 547);
             lblMapa.Name = "lblMapa";
-            lblMapa.Size = new System.Drawing.Size(300, 32);
+            lblMapa.Size = new System.Drawing.Size(300, 88);
             lblMapa.TabIndex = 11;
             // 
             // btnIniciarCU
             // 
-            btnIniciarCU.Location = new System.Drawing.Point(0, 0);
+            btnIniciarCU.Location = new System.Drawing.Point(341, 177);
             btnIniciarCU.Name = "btnIniciarCU";
             btnIniciarCU.Size = new System.Drawing.Size(280, 40);
             btnIniciarCU.TabIndex = 0;
@@ -220,11 +236,11 @@ namespace PPAI_Revisiones.Boundary
             // 
             // btnCancelar
             // 
-            btnCancelar.BackColor = System.Drawing.Color.Firebrick;
-            btnCancelar.ForeColor = System.Drawing.SystemColors.ControlLightLight;
-            btnCancelar.Location = new System.Drawing.Point(331, 600);
+            btnCancelar.BackColor = System.Drawing.Color.Red;
+            btnCancelar.ForeColor = System.Drawing.Color.White;
+            btnCancelar.Location = new System.Drawing.Point(486, 594);
             btnCancelar.Name = "btnCancelar";
-            btnCancelar.Size = new System.Drawing.Size(297, 48);
+            btnCancelar.Size = new System.Drawing.Size(145, 50);
             btnCancelar.TabIndex = 1;
             btnCancelar.Text = "Cancelar";
             btnCancelar.UseVisualStyleBackColor = false;
@@ -238,6 +254,7 @@ namespace PPAI_Revisiones.Boundary
             Controls.Add(gridEventos);
             Controls.Add(txtDetalleEvento);
             Controls.Add(txtSismograma);
+            Controls.Add(picSismograma);
             Controls.Add(grpMapa);
             Controls.Add(grpModificarAlcance);
             Controls.Add(grpModificarMagnitud);
@@ -250,6 +267,7 @@ namespace PPAI_Revisiones.Boundary
             Text = "Pantalla Nueva Revisión";
             Load += PantallaNuevaRevision_Load;
             ((System.ComponentModel.ISupportInitialize)gridEventos).EndInit();
+            ((System.ComponentModel.ISupportInitialize)picSismograma).EndInit();
             grpMapa.ResumeLayout(false);
             grpModificarAlcance.ResumeLayout(false);
             grpModificarMagnitud.ResumeLayout(false);
@@ -261,6 +279,7 @@ namespace PPAI_Revisiones.Boundary
         private System.Windows.Forms.DataGridView gridEventos;
         private System.Windows.Forms.TextBox txtDetalleEvento;
         private System.Windows.Forms.TextBox txtSismograma;
+        private System.Windows.Forms.PictureBox picSismograma;
         private System.Windows.Forms.GroupBox grpMapa;
         private System.Windows.Forms.RadioButton rbtnMapaNo;
         private System.Windows.Forms.RadioButton rbtnMapaSi;

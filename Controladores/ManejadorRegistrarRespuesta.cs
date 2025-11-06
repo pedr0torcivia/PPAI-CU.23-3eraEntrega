@@ -1,4 +1,3 @@
-using PPAI_2.Modelos;
 using PPAI_Revisiones.Boundary;
 using PPAI_Revisiones.Modelos;
 using PPAI_Revisiones.Modelos.Estados;
@@ -16,32 +15,23 @@ namespace PPAI_Revisiones.Controladores
         private EventoSismico eventoBloqueadoTemporal;
 
         private DateTime fechaHoraActual;
-        private Empleado usuarioLogueado;
+        private Empleado responsable;
 
         private string detallesEvento;
 
         // ================== FLUJO PRINCIPAL ==================
         public List<object> RegistrarNuevaRevision(PantallaNuevaRevision pantalla)
         {
-            // 1️⃣ Buscar eventos autodetectados o sin revisión
+            // 1️ Buscar eventos autodetectados o sin revisión
             eventosAutodetectadosNoRevisados = BuscarEventosAutoDetecNoRev();
 
-            // 2️⃣ Ordenar por fecha
+            // 2️ Ordenar por fecha
             OrdenarEventos();
 
-            // 3️⃣ Mostrar lista visual
-            var listaVisual = eventosAutodetectadosNoRevisados.Select(e => new
-            {
-                Fecha = e.FechaHoraInicio,
-                LatEpicentro = e.GetLatitudEpicentro(),
-                LongEpicentro = e.GetLongitudEpicentro(),
-                LatHipocentro = e.GetLatitudHipocentro(),
-                LongHipocentro = e.GetLongitudHipocentro(),
-                Magnitud = e.GetMagnitud(),
-            }).Cast<object>().ToList();
-
-            pantalla.SolicitarSeleccionEvento(listaVisual);
-            return listaVisual;
+            // 3️ Mostrar lista (los datos ya fueron obtenidos en BuscarEventosAutoDetecNoRev)
+            var lista = eventosAutodetectadosNoRevisados.Cast<object>().ToList();
+            pantalla.SolicitarSeleccionEvento(lista);
+            return lista;
         }
 
         // ================== BÚSQUEDA Y ORDEN ==================
@@ -96,11 +86,11 @@ namespace PPAI_Revisiones.Controladores
 
         private void ActualizarEventoBloqueado()
         {
-            usuarioLogueado = BuscarUsuarioLogueado();
+            responsable = BuscarUsuarioLogueado();
             fechaHoraActual = GetFechaHora();
 
             // Delego en el Evento → Estado Autodetectado maneja la transición
-            eventoSeleccionado.RegistrarEstadoBloqueado(fechaHoraActual, usuarioLogueado);
+            eventoSeleccionado.RegistrarEstadoBloqueado(fechaHoraActual, responsable);
         }
 
         private Empleado BuscarUsuarioLogueado()
@@ -121,8 +111,17 @@ namespace PPAI_Revisiones.Controladores
         {
             Console.WriteLine("[Manejador] → GenerarSismograma() ejecutado (Extensión CU)");
             var extensionCU = new CU_GenerarSismograma();
-            return extensionCU.Ejecutar();
+
+            var ruta = extensionCU.Ejecutar();
+            ruta = ruta?.Trim().Trim('"'); // por si vienen comillas/espacios
+
+            var exists = System.IO.File.Exists(ruta);
+            Console.WriteLine($"[Manejador] Ruta devuelta por CU: '{ruta}' | Exists={exists}");
+
+            return ruta;
         }
+
+
 
         // ================== OPCIONES UI (Mapa y Modificaciones) ==================
         public void HabilitarOpcionVisualizarMapa(PantallaNuevaRevision pantalla)
@@ -237,23 +236,14 @@ namespace PPAI_Revisiones.Controladores
             fechaHoraActual = GetFechaHora();
 
             // Delego en Evento → Estado Bloqueado maneja la transición
-            eventoSeleccionado.Rechazar(fechaHoraActual, usuarioLogueado);
+            eventoSeleccionado.Rechazar(fechaHoraActual, responsable);
 
-            // Quitar evento rechazado de la lista visual
+            // Quitar evento rechazado de la lista
             eventosAutodetectadosNoRevisados.Remove(eventoSeleccionado);
 
-            // Regenerar grilla
-            var listaVisual = eventosAutodetectadosNoRevisados.Select(e => new
-            {
-                Fecha = e.FechaHoraInicio,
-                LatEpicentro = e.GetLatitudEpicentro(),
-                LongEpicentro = e.GetLongitudEpicentro(),
-                LatHipocentro = e.GetLatitudHipocentro(),
-                LongHipocentro = e.GetLongitudHipocentro(),
-                Magnitud = e.GetMagnitud(),
-            }).Cast<object>().ToList();
-
-            pantalla.SolicitarSeleccionEvento(listaVisual);
+            // Regenerar grilla con los eventos restantes (ya obtenidos)
+            var lista = eventosAutodetectadosNoRevisados.Cast<object>().ToList();
+            pantalla.SolicitarSeleccionEvento(lista);
             pantalla.RestaurarEstadoInicial();
         }
 
@@ -288,18 +278,10 @@ namespace PPAI_Revisiones.Controladores
             eventosAutodetectadosNoRevisados = BuscarEventosAutoDetecNoRev();
             OrdenarEventos();
 
-            var listaVisual = eventosAutodetectadosNoRevisados.Select(e => new
-            {
-                Fecha = e.FechaHoraInicio,
-                Magnitud = e.GetMagnitud(),
-                LatEpicentro = e.GetLatitudEpicentro(),
-                LongEpicentro = e.GetLongitudEpicentro(),
-                LatHipocentro = e.GetLatitudHipocentro(),
-                LongHipocentro = e.GetLongitudHipocentro()
-            }).Cast<object>().ToList();
-
+            // Volver a mostrar usando la lista de eventos ya cargada
+            var lista = eventosAutodetectadosNoRevisados.Cast<object>().ToList();
             pantalla.RestaurarEstadoInicial();
-            pantalla.SolicitarSeleccionEvento(listaVisual);
+            pantalla.SolicitarSeleccionEvento(lista);
         }
     }
 }

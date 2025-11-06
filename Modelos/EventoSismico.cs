@@ -1,8 +1,7 @@
-using PPAI_Revisiones.Modelos;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Estado = PPAI_Revisiones.Modelos.Estados.Estado;
+using PPAI_Revisiones.Modelos.Estados; // necesario para Autodetectado, Bloqueado, etc.
 
 namespace PPAI_Revisiones.Modelos
 {
@@ -17,7 +16,7 @@ namespace PPAI_Revisiones.Modelos
         public double LongitudHipocentro { get; set; }
         public double ValorMagnitud { get; set; }
 
-        // ================== Relaciones de dominio ==================
+        // ================== Relaciones ==================
         public Estado EstadoActual { get; private set; }
         public AlcanceSismo Alcance { get; set; }
         public ClasificacionSismo Clasificacion { get; set; }
@@ -29,43 +28,36 @@ namespace PPAI_Revisiones.Modelos
         public List<CambioDeEstado> CambiosDeEstado { get; } = new();
 
         // ================== Consultas simples ==================
-        public Estado getEstado() => EstadoActual;
 
-        public string GetFechaHora() => FechaHoraInicio.ToString();
+        public string GetFechaHora() => FechaHoraInicio.ToString("g");
         public double GetLatitudEpicentro() => LatitudEpicentro;
         public double GetLongitudEpicentro() => LongitudEpicentro;
         public double GetLatitudHipocentro() => LatitudHipocentro;
         public double GetLongitudHipocentro() => LongitudHipocentro;
         public double GetMagnitud() => ValorMagnitud;
 
-        // Flags según el Estado actual
         public bool sosAutodetectado() => EstadoActual?.EsAutodetectado == true;
         public bool sosEventoSinRevision() => EstadoActual?.EsEventoSinRevision == true;
 
-        public string GetDatosOcurrencia()
-        {
-            var fecha = GetFechaHora();
-            var latEpi = GetLatitudEpicentro();
-            var lonEpi = GetLongitudEpicentro();
-            var latHipo = GetLatitudHipocentro();
-            var lonHipo = GetLongitudHipocentro();
-            var magnitud = GetMagnitud();
-
-            return $"Inicio: {fecha}, " +
-                   $"Latitud Epicentro: {latEpi}, Longitud Epicentro: {lonEpi}, " +
-                   $"Latitud Hipocentro: {latHipo}, Longitud Hipocentro: {lonHipo}, " +
-                   $"Magnitud: {magnitud}";
-        }
+        public string GetDatosOcurrencia() =>
+            $"Inicio: {GetFechaHora()}, " +
+            $"Latitud Epicentro: {LatitudEpicentro}, Longitud Epicentro: {LongitudEpicentro}, " +
+            $"Latitud Hipocentro: {LatitudHipocentro}, Longitud Hipocentro: {LongitudHipocentro}, " +
+            $"Magnitud: {ValorMagnitud}";
 
         // ================== Infra de cambios de estado ==================
-   
-        public void SetEstado(Estado e) => EstadoActual = nuevo;
+        public void AgregarCambioEstado(CambioDeEstado ce) => CambiosDeEstado.Add(ce);
+
+        public void SetEstado(Estado estado)
+        {
+            // ← acá estaba el error (se usaba un identificador distinto)
+            EstadoActual = estado;
+        }
 
         // ================== Detalle del evento y series ==================
         public string GetDetalleEventoSismico()
         {
             var sb = new System.Text.StringBuilder();
-
             sb.AppendLine("===== DETALLE DEL EVENTO SÍSMICO =====");
             sb.AppendLine($"Fecha de inicio: {FechaHoraInicio:dd/MM/yyyy HH:mm}");
             sb.AppendLine($"Epicentro: Lat {LatitudEpicentro} / Lon {LongitudEpicentro}");
@@ -74,58 +66,32 @@ namespace PPAI_Revisiones.Modelos
             sb.AppendLine($"Alcance: {Alcance?.GetNombreAlcance() ?? "(sin datos)"}");
             sb.AppendLine($"Clasificación: {Clasificacion?.GetNombreClasificacion() ?? "(sin datos)"}");
             sb.AppendLine($"Origen: {Origen?.GetNombreOrigen() ?? "(sin datos)"}");
-
-            sb.AppendLine(ObtenerDatosSeriesTemporales()); // dispara el recorrido completo
+            sb.AppendLine(ObtenerDatosSeriesTemporales());
             return sb.ToString();
         }
 
         public string ObtenerDatosSeriesTemporales()
         {
-            Console.WriteLine("[Evento] → obtenerDatosSeriesTemporales()");
             var sb = new System.Text.StringBuilder();
-
             foreach (var serie in (SeriesTemporales ?? new List<SerieTemporal>()))
-            {
-                Console.WriteLine("[Evento → SerieTemporal] getSeries()");
-                sb.Append(serie.GetSeries()); // el loop interno vive en SerieTemporal.GetSeries()
-            }
-
-            AgruparInformacionSeriesPorEstacion(); // ordenar al final del recorrido
+                sb.Append(serie.GetSeries());
+            AgruparInformacionSeriesPorEstacion();
             return sb.ToString();
         }
 
         public void AgruparInformacionSeriesPorEstacion()
-        {
-            Console.WriteLine("[Evento] → AgruparInformacionSeriesPorEstacion()");
-            SeriesTemporales = SeriesTemporales
+            => SeriesTemporales = SeriesTemporales
                 .OrderBy(s => s.Sismografo?.GetNombreEstacion()?.ToLowerInvariant())
                 .ToList();
-        }
 
-        // ================== API explícita (delegación al Estado) ==================
-        // IMPORTANTE: ya NO cerramos CE aquí; las clases Estado se ocupan de:
-        // - buscarCambioEstadoAbierto()
-        // - setFechaHoraFin()
-        // - crearEstado()
-        // - crearCambioEstado()
-        // - AgregarCambioEstado()
-        // - setEstado()
-
-        /// <summary>
-        /// Autodetectado → Bloqueado (llama a Estado.registrarEstadoBloqueado(ctx, cambios, fecha, responsable))
-        /// </summary>
+        // ================== Delegación a los ESTADOS (patrón State) ==================
+        // Firmas alineadas a tu consigna: los Estados hacen todo (cerrar CE, crear nuevo estado y CE).
         public void RegistrarEstadoBloqueado(DateTime fechaHoraActual, Empleado responsable)
-            => (EstadoActual as Estados.Autodetectado)
+            => (EstadoActual as Autodetectado)
                ?.registrarEstadoBloqueado(this, CambiosDeEstado, fechaHoraActual, responsable);
 
-        /// <summary>
-        /// Bloqueado → Rechazado (llama a Estado.rechazar(cambios, es, fecha, responsable))
-        /// </summary>
         public void Rechazar(DateTime fechaHoraActual, Empleado responsable)
-            => (EstadoActual as Estados.Bloqueado)
+            => (EstadoActual as Bloqueado)
                ?.rechazar(CambiosDeEstado, this, fechaHoraActual, responsable);
-
-        // Si más adelante sumamos Confirmar/Derivar/Cerrar con firmas de la consigna,
-        // se exponen aquí siguiendo el mismo esquema (delegando en la clase Estado).
     }
 }

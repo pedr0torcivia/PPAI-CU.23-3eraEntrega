@@ -15,14 +15,14 @@ namespace PPAI_Revisiones.Modelos.Estados
             DateTime fechaHoraActual,
             Empleado responsable)
         {
-            // 1️⃣ Buscar y cerrar cambio abierto (si existe)
+            // 1️ Buscar y cerrar cambio abierto (si existe)
             var abierto = BuscarCambioAbierto(cambiosEstado);
             abierto?.SetFechaHoraFin(fechaHoraActual);
 
-            // 2️⃣ Crear nuevo estado Bloqueado
+            // 2️ Crear nuevo estado Bloqueado
             var nuevoEstado = new Bloqueado();
 
-            // 3️⃣ Crear CE y agregarlo
+            // 3️ Crear CE y agregarlo
             var ce = new CambioDeEstado
             {
                 EstadoActual = nuevoEstado,
@@ -36,7 +36,7 @@ namespace PPAI_Revisiones.Modelos.Estados
             ctx.SetEstado(nuevoEstado);
         }
 
-        // Helper local (evita duplicar código)
+        // Helper local
         private static CambioDeEstado BuscarCambioAbierto(List<CambioDeEstado> cambios)
             => cambios?.Find(c => c.EsEstadoActual());
     }
