@@ -4,6 +4,8 @@ namespace PPAI_Revisiones.Modelos
 {
     public class Sesion
     {
+        public Guid Id { get; set; } = Guid.NewGuid();
+
         private Usuario usuarioLogueado; 
 
         public Sesion(Usuario usuario)    

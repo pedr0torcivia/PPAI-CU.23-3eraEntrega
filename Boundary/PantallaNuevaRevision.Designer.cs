@@ -50,6 +50,7 @@ namespace PPAI_Revisiones.Boundary
             gridEventos.Name = "gridEventos";
             gridEventos.Size = new System.Drawing.Size(619, 150);
             gridEventos.TabIndex = 2;
+            gridEventos.CellContentClick += gridEventos_CellContentClick;
             gridEventos.SelectionChanged += gridEventos_SelectionChanged;
             // 
             // txtDetalleEvento

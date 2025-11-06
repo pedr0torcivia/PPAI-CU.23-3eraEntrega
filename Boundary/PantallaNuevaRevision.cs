@@ -56,10 +56,12 @@ namespace PPAI_Revisiones.Boundary
 
         public void SolicitarSeleccionEvento(List<object> eventos)
         {
-            gridEventos.DataSource = null;
-            gridEventos.AutoGenerateColumns = true;
+            gridEventos.AutoGenerateColumns = true;   // o false si definís columnas a mano
+            gridEventos.DataSource = null;            // limpia binding previo
+            gridEventos.Columns.Clear();              // opcional, por si quedaron columnas
             gridEventos.DataSource = eventos;
         }
+
 
         private void gridEventos_SelectionChanged(object sender, EventArgs e)
         {
@@ -300,6 +302,11 @@ namespace PPAI_Revisiones.Boundary
         }
 
         private void picSismograma_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void gridEventos_CellContentClick(object sender, DataGridViewCellEventArgs e)
         {
 
         }

@@ -1,14 +1,22 @@
+using Microsoft.EntityFrameworkCore;
+using PPAI_2.Infra.Data;
+using PPAI_2.Infra.Repos;
 using PPAI_Revisiones.Boundary;
 using PPAI_Revisiones.Modelos;
 using PPAI_Revisiones.Modelos.Estados;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Windows.Forms;
 
 namespace PPAI_Revisiones.Controladores
 {
-    public class ManejadorRegistrarRespuesta
+    public class ManejadorRegistrarRespuesta : IDisposable
     {
+        // Infra (EF)
+        private readonly RedSismicaContext _ctx;
+        private readonly IEventoRepository _repo;
+
         // === Variables de control del CU ===
         private List<EventoSismico> eventosAutodetectadosNoRevisados;
         private EventoSismico eventoSeleccionado;
@@ -19,28 +27,47 @@ namespace PPAI_Revisiones.Controladores
 
         private string detallesEvento;
 
+        public ManejadorRegistrarRespuesta()
+        {
+            _ctx = new RedSismicaContext();
+            _repo = new EventoRepositoryEF(_ctx);
+        }
+
         // ================== FLUJO PRINCIPAL ==================
         public List<object> RegistrarNuevaRevision(PantallaNuevaRevision pantalla)
         {
-            // 1️ Buscar eventos autodetectados o sin revisión
+            // 1) Buscar y 2) Ordenar
             eventosAutodetectadosNoRevisados = BuscarEventosAutoDetecNoRev();
-
-            // 2️ Ordenar por fecha
             OrdenarEventos();
 
-            // 3️ Mostrar lista (los datos ya fueron obtenidos en BuscarEventosAutoDetecNoRev)
-            var lista = eventosAutodetectadosNoRevisados.Cast<object>().ToList();
+            // 3) Proyectar SOLO las columnas que querés mostrar
+            var lista = eventosAutodetectadosNoRevisados
+                .Select(e => new
+                {
+                    e.FechaHoraInicio,
+                    e.LatitudEpicentro,
+                    e.LongitudEpicentro,
+                    e.LatitudHipocentro,
+                    e.LongitudHipocentro,
+                    e.ValorMagnitud
+                })
+                .Cast<object>()
+                .ToList();
+
+            // Enviar a la pantalla la lista PROYECTADA (no la entidad completa)
             pantalla.SolicitarSeleccionEvento(lista);
+
+            // Devolver lo mismo por consistencia (si lo usás en otro lado)
             return lista;
         }
 
         // ================== BÚSQUEDA Y ORDEN ==================
         private List<EventoSismico> BuscarEventosAutoDetecNoRev()
         {
-            var lista = DatosMock.Eventos
-                .Where(e => e.sosAutodetectado() || e.sosEventoSinRevision())
-                .ToList();
+            // Usa el repositorio EF (último cambio de estado abierto)
+            var lista = _repo.GetEventosAutoDetectadosNoRevisados().ToList();
 
+            // Log opcional
             foreach (var evento in lista)
             {
                 var datos = evento.GetDatosOcurrencia();
@@ -66,11 +93,12 @@ namespace PPAI_Revisiones.Controladores
             if (eventoBloqueadoTemporal != null && eventoBloqueadoTemporal != nuevoEvento)
                 RevertirBloqueo(eventoBloqueadoTemporal);
 
-            eventoSeleccionado = nuevoEvento;
-            eventoBloqueadoTemporal = nuevoEvento;
+            eventoSeleccionado = _repo.GetEventoConSeriesYDetalles(nuevoEvento.Id);
+            eventoBloqueadoTemporal = eventoSeleccionado;
 
-            // Autodetectado → Bloqueado
+            // Autodetectado → Bloqueado (delegado al estado del evento)
             ActualizarEventoBloqueado();
+            _repo.Guardar(); // persistir
 
             pantalla.MostrarMensaje("El evento ha sido BLOQUEADO para su revisión.");
 
@@ -95,8 +123,11 @@ namespace PPAI_Revisiones.Controladores
 
         private Empleado BuscarUsuarioLogueado()
         {
-            var usuario = DatosMock.SesionActual.GetUsuario();
-            return DatosMock.Empleados.FirstOrDefault(e => e.EsTuUsuario(usuario.NombreUsuario));
+            // Sin DatosMock: tomamos el primer Empleado disponible (o null si no hay)
+            // Si querés algo más específico, filtrá por Usuario.NombreUsuario
+            return _ctx.Empleados
+                       .Include(e => e.Usuario)
+                       .FirstOrDefault();
         }
 
         private DateTime GetFechaHora() => DateTime.Now;
@@ -120,8 +151,6 @@ namespace PPAI_Revisiones.Controladores
 
             return ruta;
         }
-
-
 
         // ================== OPCIONES UI (Mapa y Modificaciones) ==================
         public void HabilitarOpcionVisualizarMapa(PantallaNuevaRevision pantalla)
@@ -179,20 +208,7 @@ namespace PPAI_Revisiones.Controladores
                     }
 
                     ActualizarEstadoRechazado(pantalla);
-
-                    string mensaje = "Evento rechazado correctamente.\n\n";
-                    mensaje += eventoSeleccionado.GetDetalleEventoSismico() + "\n";
-                    mensaje += "CAMBIOS DE ESTADO:\n";
-                    foreach (var cambio in eventoSeleccionado.CambiosDeEstado)
-                    {
-                        var nombre = cambio.EstadoActual?.Nombre ?? "(sin estado)";
-                        var inicio = cambio.FechaHoraInicio?.ToString("g") ?? "(sin inicio)";
-                        var fin = cambio.FechaHoraFin?.ToString("g") ?? "(en curso)";
-                        var resp = cambio.Responsable?.Nombre ?? "(desconocido)";
-
-                        mensaje += $"- {nombre}: {inicio} → {fin} | Responsable: {resp}\n";
-                    }
-                    pantalla.MostrarMensaje(mensaje);
+                    _repo.Guardar(); // persistir
                     break;
 
                 case 3: // Derivar
@@ -218,9 +234,6 @@ namespace PPAI_Revisiones.Controladores
             bool modificarOrigen = pantalla.SeleccionoModificarOrigen;
             bool deseaMapa = pantalla.SeleccionoVisualizarMapa;
 
-            if (modificarAlcance || modificarMagnitud || modificarOrigen || deseaMapa)
-                return false;
-
             return true;
         }
 
@@ -238,31 +251,66 @@ namespace PPAI_Revisiones.Controladores
             // Delego en Evento → Estado Bloqueado maneja la transición
             eventoSeleccionado.Rechazar(fechaHoraActual, responsable);
 
-            // Quitar evento rechazado de la lista
+            // Quitar evento rechazado de la lista en memoria
             eventosAutodetectadosNoRevisados.Remove(eventoSeleccionado);
 
-            // Regenerar grilla con los eventos restantes (ya obtenidos)
+            // Regenerar grilla con los eventos restantes
             var lista = eventosAutodetectadosNoRevisados.Cast<object>().ToList();
             pantalla.SolicitarSeleccionEvento(lista);
             pantalla.RestaurarEstadoInicial();
+
+            // Mensaje con historial
+            string mensaje = "Evento rechazado correctamente.\n\n";
+            mensaje += eventoSeleccionado.GetDetalleEventoSismico() + "\n";
+            mensaje += "CAMBIOS DE ESTADO:\n";
+            foreach (var cambio in eventoSeleccionado.CambiosDeEstado)
+            {
+                var nombre = cambio.EstadoActual?.Nombre ?? "(sin estado)";
+                var inicio = cambio.FechaHoraInicio?.ToString("g") ?? "(sin inicio)";
+                var fin = cambio.FechaHoraFin?.ToString("g") ?? "(en curso)";
+                var resp = cambio.Responsable?.Nombre ?? "(desconocido)";
+
+                mensaje += $"- {nombre}: {inicio} → {fin} | Responsable: {resp}\n";
+            }
+            pantalla.MostrarMensaje(mensaje);
         }
 
         // ================== REVERSIÓN DE BLOQUEO TEMPORAL ==================
         private void RevertirBloqueo(EventoSismico evento)
         {
-            var ultimo = evento.CambiosDeEstado.LastOrDefault();
-            if (ultimo != null && ultimo.EstadoActual is Bloqueado)
-            {
-                evento.CambiosDeEstado.Remove(ultimo);
+            // 1) Volver a cargar el evento TRACKED (grafo completo) por Id
+            var ev = _repo.GetEventoConSeriesYDetalles(evento.Id);
+            if (ev == null) return;
 
-                var anterior = evento.CambiosDeEstado.LastOrDefault();
-                if (anterior != null)
-                {
-                    anterior.FechaHoraFin = null;
-                    evento.SetEstado(anterior.EstadoActual);
-                }
+            // 2) Tomar el último cambio y el anterior (orden por fecha)
+            var ordenados = ev.CambiosDeEstado
+                .OrderByDescending(c => c.FechaHoraInicio ?? DateTime.MinValue)
+                .ToList();
+
+            var ultimo = ordenados.FirstOrDefault();
+            var anterior = ordenados.Skip(1).FirstOrDefault();
+
+            // 3) Si el último es Bloqueado → eliminarlo FÍSICAMENTE
+            if (ultimo != null && string.Equals(ultimo.EstadoNombre, "Bloqueado", StringComparison.OrdinalIgnoreCase))
+            {
+                _ctx.CambiosDeEstado.Remove(ultimo);
             }
+
+            // 4) Reabrir el anterior SOLO si estaba cerrado
+            if (anterior != null && anterior.FechaHoraFin.HasValue)
+            {
+                anterior.FechaHoraFin = null;
+                ev.EstadoActualNombre = anterior.EstadoNombre; // reflejar estado actual persistido
+                ev.MaterializarEstadoDesdeNombre();            // reconstruir objeto EstadoActual
+            }
+
+            // (Opcional) Diagnóstico
+            // var estados = string.Join("\n", _ctx.ChangeTracker.Entries().Select(e => $"{e.Entity.GetType().Name} -> {e.State}"));
+            // MessageBox.Show(estados, "TRACKER EF antes de Guardar");
+
+            _repo.Guardar();
         }
+
 
         // ================== REINICIAR CU ==================
         public void ReiniciarCU(PantallaNuevaRevision pantalla)
@@ -278,10 +326,14 @@ namespace PPAI_Revisiones.Controladores
             eventosAutodetectadosNoRevisados = BuscarEventosAutoDetecNoRev();
             OrdenarEventos();
 
-            // Volver a mostrar usando la lista de eventos ya cargada
             var lista = eventosAutodetectadosNoRevisados.Cast<object>().ToList();
             pantalla.RestaurarEstadoInicial();
             pantalla.SolicitarSeleccionEvento(lista);
+        }
+
+        public void Dispose()
+        {
+            _ctx?.Dispose();
         }
     }
 }

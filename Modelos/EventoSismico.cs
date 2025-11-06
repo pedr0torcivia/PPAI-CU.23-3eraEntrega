@@ -1,13 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using PPAI_Revisiones.Modelos.Estados; // necesario para Autodetectado, Bloqueado, etc.
+using System.ComponentModel.DataAnnotations.Schema;       // <— agregado
+using PPAI_Revisiones.Modelos.Estados; // Autodetectado, Bloqueado, etc.
 
 namespace PPAI_Revisiones.Modelos
 {
     public class EventoSismico
     {
-        // ================== Datos básicos ==================
+        // =============== Datos básicos ===============
+        public Guid Id { get; set; } = Guid.NewGuid();
         public DateTime FechaHoraInicio { get; set; }
         public DateTime FechaHoraDeteccion { get; set; }
         public double LatitudEpicentro { get; set; }
@@ -16,19 +18,30 @@ namespace PPAI_Revisiones.Modelos
         public double LongitudHipocentro { get; set; }
         public double ValorMagnitud { get; set; }
 
-        // ================== Relaciones ==================
+        // =============== Estado (patrón State) ===============
+        // Objeto en memoria (NO se mapea)
+        [NotMapped]                                         // <— agregado
         public Estado EstadoActual { get; private set; }
+
+        // Valor persistente en BD (sí se mapea)
+        public string EstadoActualNombre { get; set; } = "Autodetectado"; // <— default seguro
+
+        // =============== Relaciones de catálogo/usuario ===============
+        public Guid AlcanceId { get; set; }
+        public Guid ClasificacionId { get; set; }
+        public Guid OrigenId { get; set; }
+        public Guid ResponsableId { get; set; }
+
         public AlcanceSismo Alcance { get; set; }
         public ClasificacionSismo Clasificacion { get; set; }
         public OrigenDeGeneracion Origen { get; set; }
         public Empleado Responsable { get; set; }
 
-        // Series y cambios de estado
+        // =============== Series y cambios de estado ===============
         public List<SerieTemporal> SeriesTemporales { get; private set; } = new();
         public List<CambioDeEstado> CambiosDeEstado { get; } = new();
 
-        // ================== Consultas simples ==================
-
+        // =============== Consultas simples ===============
         public string GetFechaHora() => FechaHoraInicio.ToString("g");
         public double GetLatitudEpicentro() => LatitudEpicentro;
         public double GetLongitudEpicentro() => LongitudEpicentro;
@@ -36,8 +49,12 @@ namespace PPAI_Revisiones.Modelos
         public double GetLongitudHipocentro() => LongitudHipocentro;
         public double GetMagnitud() => ValorMagnitud;
 
-        public bool sosAutodetectado() => EstadoActual?.EsAutodetectado == true;
-        public bool sosEventoSinRevision() => EstadoActual?.EsEventoSinRevision == true;
+        // Funciona aunque EstadoActual aún no esté reconstruido en memoria
+        public bool sosAutodetectado() =>
+            (EstadoActual?.EsAutodetectado == true) || EstadoActualNombre == "Autodetectado";
+
+        public bool sosEventoSinRevision() =>
+            (EstadoActual?.EsEventoSinRevision == true) || EstadoActualNombre == "Evento sin revisión";
 
         public string GetDatosOcurrencia() =>
             $"Inicio: {GetFechaHora()}, " +
@@ -45,16 +62,26 @@ namespace PPAI_Revisiones.Modelos
             $"Latitud Hipocentro: {LatitudHipocentro}, Longitud Hipocentro: {LongitudHipocentro}, " +
             $"Magnitud: {ValorMagnitud}";
 
-        // ================== Infra de cambios de estado ==================
+        // =============== Infra de cambios de estado ===============
         public void AgregarCambioEstado(CambioDeEstado ce) => CambiosDeEstado.Add(ce);
 
         public void SetEstado(Estado estado)
         {
-            // ← acá estaba el error (se usaba un identificador distinto)
             EstadoActual = estado;
+            EstadoActualNombre = estado?.Nombre; // <- CLAVE: persistimos el nombre
         }
 
-        // ================== Detalle del evento y series ==================
+        // --- NUEVO: reconstruir Estado desde el nombre persistido (para leer de BD) ---
+        public void MaterializarEstadoDesdeNombre()
+            => EstadoActual = EstadoFactory.FromName(EstadoActualNombre);
+
+        public void MaterializarEstadosDeCambios()
+        {
+            foreach (var c in CambiosDeEstado)
+                c.EstadoActual = EstadoFactory.FromName(c.EstadoNombre);
+        }
+
+        // =============== Detalle del evento y series ===============
         public string GetDetalleEventoSismico()
         {
             var sb = new System.Text.StringBuilder();
@@ -84,8 +111,7 @@ namespace PPAI_Revisiones.Modelos
                 .OrderBy(s => s.Sismografo?.GetNombreEstacion()?.ToLowerInvariant())
                 .ToList();
 
-        // ================== Delegación a los ESTADOS (patrón State) ==================
-        // Firmas alineadas a tu consigna: los Estados hacen todo (cerrar CE, crear nuevo estado y CE).
+        // =============== Delegación a los ESTADOS (State) ===============
         public void RegistrarEstadoBloqueado(DateTime fechaHoraActual, Empleado responsable)
             => (EstadoActual as Autodetectado)
                ?.registrarEstadoBloqueado(this, CambiosDeEstado, fechaHoraActual, responsable);
@@ -93,5 +119,20 @@ namespace PPAI_Revisiones.Modelos
         public void Rechazar(DateTime fechaHoraActual, Empleado responsable)
             => (EstadoActual as Bloqueado)
                ?.rechazar(CambiosDeEstado, this, fechaHoraActual, responsable);
+    }
+
+    // --- NUEVO: Factory mínima sin tocar tu lógica de estados ---
+    internal static class EstadoFactory
+    {
+        public static Estado FromName(string nombre)
+        {
+            switch ((nombre ?? "").Trim())
+            {
+                case "Autodetectado": return new Autodetectado();
+                case "Bloqueado": return new Bloqueado();
+                case "Rechazado": return new Rechazado();
+                default: return new Autodetectado();
+            }
+        }
     }
 }

@@ -4,6 +4,10 @@ namespace PPAI_Revisiones.Modelos
 {
     public class DetalleMuestra
     {
+        public Guid Id { get; set; } = Guid.NewGuid();
+        public Guid MuestraSismicaId { get; set; }
+        public Guid TipoDeDatoId { get; set; }
+
         public double Valor { get; set; }
         public TipoDeDato TipoDeDato { get; set; }
 

@@ -1,15 +1,19 @@
-// Modelos/Sismografo.cs
+using System;
+
 namespace PPAI_Revisiones.Modelos
 {
     public class Sismografo
     {
-        public string IdentificadorSismografo { get; set; }
-        public string NroSerie { get; set; }
+        public Guid Id { get; set; } = Guid.NewGuid();
+        public Guid? EstacionId { get; set; }        // <-- NUEVO
+
+
+        public string IdentificadorSismografo { get; set; } = string.Empty;
+        public string NroSerie { get; set; } = string.Empty;
+
+        public DateTime? FechaAdquisicion { get; set; }   // columna agregada por parche en runtime
         public EstacionSismologica Estacion { get; set; }
 
-        public string GetNombreEstacion()
-        {
-            return Estacion?.GetNombreEstacion();
-        }
+        public string GetNombreEstacion() => Estacion?.GetNombreEstacion();
     }
 }

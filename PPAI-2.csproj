@@ -1,9 +1,30 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<OutputType>WinExe</OutputType>
 		<TargetFramework>net6.0-windows</TargetFramework>
 		<UseWindowsForms>true</UseWindowsForms>
+		<!-- desactiva la generación del atributo que se está duplicando -->
+		<GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
 	</PropertyGroup>
+
+	<ItemGroup>
+	  <PackageReference Include="EFCore.BulkExtensions" Version="6.*" />
+	  <PackageReference Include="Microsoft.EntityFrameworkCore" Version="6.0.29" />
+	  <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="6.0.29">
+	    <PrivateAssets>all</PrivateAssets>
+	    <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+	  </PackageReference>
+	  <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="6.0.29" />
+	  <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="6.0.29" />
+	  <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="6.0.29">
+	    <PrivateAssets>all</PrivateAssets>
+	    <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+	  </PackageReference>
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Folder Include="import\" />
+	</ItemGroup>
 
 </Project>

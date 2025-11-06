@@ -17,7 +17,8 @@ namespace PPAI_Revisiones.Modelos.Estados
         {
             // 1️ Buscar y cerrar cambio abierto (si existe)
             var abierto = BuscarCambioAbierto(cambiosEstado);
-            abierto?.SetFechaHoraFin(fechaHoraActual);
+            if (abierto != null && !abierto.FechaHoraFin.HasValue)   // ← solo si está abierto
+                abierto.SetFechaHoraFin(fechaHoraActual);
 
             // 2️ Crear nuevo estado Bloqueado
             var nuevoEstado = new Bloqueado();
@@ -30,6 +31,8 @@ namespace PPAI_Revisiones.Modelos.Estados
                 FechaHoraFin = null,
                 Responsable = responsable
             };
+            ce.EstadoNombre = "Bloqueado";   // ← **AGREGAR ESTA LÍNEA**
+            ce.ResponsableId = responsable?.Id ?? Guid.Empty;
             cambiosEstado.Add(ce);
 
             // 4️⃣ Actualizar estado del evento
