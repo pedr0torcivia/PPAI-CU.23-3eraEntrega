@@ -1,27 +1,35 @@
-using PPAI;
+using PPAI_2.Modelos;
 using PPAI_Revisiones.Boundary;
 using PPAI_Revisiones.Modelos;
+using PPAI_Revisiones.Modelos.Estados;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 
 namespace PPAI_Revisiones.Controladores
 {
     public class ManejadorRegistrarRespuesta
     {
+        // === Variables de control del CU ===
         private List<EventoSismico> eventosAutodetectadosNoRevisados;
         private EventoSismico eventoSeleccionado;
         private EventoSismico eventoBloqueadoTemporal;
+
         private DateTime fechaHoraActual;
         private Empleado usuarioLogueado;
+
         private string detallesEvento;
 
+        // ================== FLUJO PRINCIPAL ==================
         public List<object> RegistrarNuevaRevision(PantallaNuevaRevision pantalla)
         {
+            // 1️⃣ Buscar eventos autodetectados o sin revisión
             eventosAutodetectadosNoRevisados = BuscarEventosAutoDetecNoRev();
+
+            // 2️⃣ Ordenar por fecha
             OrdenarEventos();
 
+            // 3️⃣ Mostrar lista visual
             var listaVisual = eventosAutodetectadosNoRevisados.Select(e => new
             {
                 Fecha = e.FechaHoraInicio,
@@ -36,13 +44,12 @@ namespace PPAI_Revisiones.Controladores
             return listaVisual;
         }
 
+        // ================== BÚSQUEDA Y ORDEN ==================
         private List<EventoSismico> BuscarEventosAutoDetecNoRev()
         {
-            List<EventoSismico> lista = DatosMock.Eventos.Where(e =>
-            {
-                var estado = e.getEstado();
-                return estado != null && (estado.EsNoRevisado() || estado.EsAutodetectado());
-            }).ToList();
+            var lista = DatosMock.Eventos
+                .Where(e => e.sosAutodetectado() || e.sosEventoSinRevision())
+                .ToList();
 
             foreach (var evento in lista)
             {
@@ -60,39 +67,40 @@ namespace PPAI_Revisiones.Controladores
                 .ToList();
         }
 
+        // ================== SELECCIÓN Y BLOQUEO ==================
         public void TomarSeleccionEvento(int indice, PantallaNuevaRevision pantalla)
         {
             var nuevoEvento = eventosAutodetectadosNoRevisados[indice];
 
+            // Si había otro bloqueado temporal, revertir
             if (eventoBloqueadoTemporal != null && eventoBloqueadoTemporal != nuevoEvento)
                 RevertirBloqueo(eventoBloqueadoTemporal);
 
             eventoSeleccionado = nuevoEvento;
             eventoBloqueadoTemporal = nuevoEvento;
 
+            // Autodetectado → Bloqueado
             ActualizarEventoBloqueado();
+
             pantalla.MostrarMensaje("El evento ha sido BLOQUEADO para su revisión.");
 
+            // Detalles y sismograma
             BuscarDetallesEventoSismico();
-            string sismograma = GenerarSismograma();
+            var sismograma = GenerarSismograma();
+
             pantalla.MostrarDetalleEventoSismico(detallesEvento);
             pantalla.MostrarSismograma(sismograma);
+
             HabilitarOpcionVisualizarMapa(pantalla);
         }
 
         private void ActualizarEventoBloqueado()
         {
-            Estado estadoBloqueado = BuscarEstadoBloqueado();
             usuarioLogueado = BuscarUsuarioLogueado();
             fechaHoraActual = GetFechaHora();
 
-            eventoSeleccionado.RegistrarEstadoBloqueado(estadoBloqueado, usuarioLogueado.Nombre, fechaHoraActual);
-
-        }
-
-        private Estado BuscarEstadoBloqueado()
-        {
-            return DatosMock.Estados.FirstOrDefault(e => e.EsAmbitoEvento() && e.EsBloqueado());
+            // Delego en el Evento → Estado Autodetectado maneja la transición
+            eventoSeleccionado.RegistrarEstadoBloqueado(fechaHoraActual, usuarioLogueado);
         }
 
         private Empleado BuscarUsuarioLogueado()
@@ -101,11 +109,9 @@ namespace PPAI_Revisiones.Controladores
             return DatosMock.Empleados.FirstOrDefault(e => e.EsTuUsuario(usuario.NombreUsuario));
         }
 
-        private DateTime GetFechaHora()
-        {
-            return DateTime.Now;
-        }
+        private DateTime GetFechaHora() => DateTime.Now;
 
+        // ================== DETALLE Y SISMOGRAMA ==================
         private void BuscarDetallesEventoSismico()
         {
             detallesEvento = eventoSeleccionado?.GetDetalleEventoSismico() ?? "(Evento nulo)";
@@ -114,12 +120,11 @@ namespace PPAI_Revisiones.Controladores
         private string GenerarSismograma()
         {
             Console.WriteLine("[Manejador] → GenerarSismograma() ejecutado (Extensión CU)");
-
-            // <<include>> al caso de uso extendido
             var extensionCU = new CU_GenerarSismograma();
-            return extensionCU.Ejecutar(); // delega la generación del sismograma
+            return extensionCU.Ejecutar();
         }
 
+        // ================== OPCIONES UI (Mapa y Modificaciones) ==================
         public void HabilitarOpcionVisualizarMapa(PantallaNuevaRevision pantalla)
         {
             pantalla.opcionMostrarMapa();
@@ -134,39 +139,25 @@ namespace PPAI_Revisiones.Controladores
             pantalla.SolicitarSeleccionAcciones();
         }
 
-        public void HabilitarModificacionAlcance(PantallaNuevaRevision pantalla)
-        {
-            pantalla.OpcionModificacionAlcance();
-        }
-
+        public void HabilitarModificacionAlcance(PantallaNuevaRevision pantalla) => pantalla.OpcionModificacionAlcance();
         public void TomarOpcionModificacionAlcance(bool modificar, PantallaNuevaRevision pantalla)
         {
-            if (!modificar)
-                Console.WriteLine("Actor eligió NO modificar Alcance.");
+            if (!modificar) Console.WriteLine("Actor eligió NO modificar Alcance.");
         }
 
-        public void HabilitarModificacionMagnitud(PantallaNuevaRevision pantalla)
-        {
-            pantalla.OpcionModificacionMagnitud();
-        }
-
+        public void HabilitarModificacionMagnitud(PantallaNuevaRevision pantalla) => pantalla.OpcionModificacionMagnitud();
         public void TomarOpcionModificacionMagnitud(bool modificar, PantallaNuevaRevision pantalla)
         {
-            if (!modificar)
-                Console.WriteLine("Actor eligió NO modificar Magnitud.");
+            if (!modificar) Console.WriteLine("Actor eligió NO modificar Magnitud.");
         }
 
-        public void HabilitarModificacionOrigen(PantallaNuevaRevision pantalla)
-        {
-            pantalla.OpcionModificacionOrigen();
-        }
-
+        public void HabilitarModificacionOrigen(PantallaNuevaRevision pantalla) => pantalla.OpcionModificacionOrigen();
         public void TomarOpcionModificacionOrigen(bool modificar, PantallaNuevaRevision pantalla)
         {
-            if (!modificar)
-                Console.WriteLine("Actor eligió NO modificar Origen.");
+            if (!modificar) Console.WriteLine("Actor eligió NO modificar Origen.");
         }
 
+        // ================== ACCIÓN FINAL (Confirmar / Rechazar / Derivar) ==================
         public void TomarOpcionAccion(int opcion, PantallaNuevaRevision pantalla)
         {
             if (!ValidarAccion(opcion, pantalla))
@@ -177,10 +168,11 @@ namespace PPAI_Revisiones.Controladores
 
             switch (opcion)
             {
-                case 1:
+                case 1: // Confirmar
                     pantalla.MostrarMensaje("Evento confirmado correctamente.");
                     break;
-                case 2:
+
+                case 2: // Rechazar (Bloqueado → Rechazado)
                     if (eventoSeleccionado == null)
                     {
                         pantalla.MostrarMensaje("Error: evento seleccionado nulo.");
@@ -197,12 +189,14 @@ namespace PPAI_Revisiones.Controladores
                         var nombre = cambio.EstadoActual?.Nombre ?? "(sin estado)";
                         var inicio = cambio.FechaHoraInicio?.ToString("g") ?? "(sin inicio)";
                         var fin = cambio.FechaHoraFin?.ToString("g") ?? "(en curso)";
-                        var resp = cambio.Responsable ?? "(desconocido)";
+                        var resp = cambio.Responsable?.Nombre ?? "(desconocido)";
+
                         mensaje += $"- {nombre}: {inicio} → {fin} | Responsable: {resp}\n";
                     }
                     pantalla.MostrarMensaje(mensaje);
                     break;
-                case 3:
+
+                case 3: // Derivar
                     pantalla.MostrarMensaje("Evento derivado a experto.");
                     break;
             }
@@ -214,6 +208,7 @@ namespace PPAI_Revisiones.Controladores
         {
             if (opcion < 1 || opcion > 3) return false;
             if (eventoSeleccionado == null) return false;
+
             if (eventoSeleccionado.Alcance == null ||
                 eventoSeleccionado.Origen == null ||
                 eventoSeleccionado.ValorMagnitud <= 0)
@@ -230,6 +225,7 @@ namespace PPAI_Revisiones.Controladores
             return true;
         }
 
+        // ================== RECHAZO (Bloqueado → Rechazado) ==================
         private void ActualizarEstadoRechazado(PantallaNuevaRevision pantalla)
         {
             if (eventoSeleccionado == null)
@@ -238,20 +234,15 @@ namespace PPAI_Revisiones.Controladores
                 return;
             }
 
-            Estado estadoRechazado = DatosMock.Estados
-                .First(e => e.EsAmbitoEvento() && e.EsRechazado());
-
             fechaHoraActual = GetFechaHora();
 
-            eventoSeleccionado.Rechazar(
-                estadoRechazado,
-                usuarioLogueado?.Nombre ?? "(desconocido)",
-                fechaHoraActual
-            );
+            // Delego en Evento → Estado Bloqueado maneja la transición
+            eventoSeleccionado.Rechazar(fechaHoraActual, usuarioLogueado);
 
-            // REGENERA LISTA VISUAL PARA LA PANTALLA
+            // Quitar evento rechazado de la lista visual
             eventosAutodetectadosNoRevisados.Remove(eventoSeleccionado);
 
+            // Regenerar grilla
             var listaVisual = eventosAutodetectadosNoRevisados.Select(e => new
             {
                 Fecha = e.FechaHoraInicio,
@@ -261,18 +252,19 @@ namespace PPAI_Revisiones.Controladores
                 LongHipocentro = e.GetLongitudHipocentro(),
                 Magnitud = e.GetMagnitud(),
             }).Cast<object>().ToList();
-            // ACTUALIZAR GRILLA EN LA PANTALLA
+
             pantalla.SolicitarSeleccionEvento(listaVisual);
-            // LIMPIAR CONTROLES
             pantalla.RestaurarEstadoInicial();
         }
 
+        // ================== REVERSIÓN DE BLOQUEO TEMPORAL ==================
         private void RevertirBloqueo(EventoSismico evento)
         {
             var ultimo = evento.CambiosDeEstado.LastOrDefault();
-            if (ultimo != null && ultimo.EstadoActual.EsBloqueado())
+            if (ultimo != null && ultimo.EstadoActual is Bloqueado)
             {
                 evento.CambiosDeEstado.Remove(ultimo);
+
                 var anterior = evento.CambiosDeEstado.LastOrDefault();
                 if (anterior != null)
                 {
@@ -282,6 +274,7 @@ namespace PPAI_Revisiones.Controladores
             }
         }
 
+        // ================== REINICIAR CU ==================
         public void ReiniciarCU(PantallaNuevaRevision pantalla)
         {
             if (eventoBloqueadoTemporal != null)
@@ -305,7 +298,7 @@ namespace PPAI_Revisiones.Controladores
                 LongHipocentro = e.GetLongitudHipocentro()
             }).Cast<object>().ToList();
 
-            pantalla.RestaurarEstadoInicial(); //PARA LOS ELEMENTOS VISUALES
+            pantalla.RestaurarEstadoInicial();
             pantalla.SolicitarSeleccionEvento(listaVisual);
         }
     }

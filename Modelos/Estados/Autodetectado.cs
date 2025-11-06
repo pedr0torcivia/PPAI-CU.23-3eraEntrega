@@ -1,0 +1,43 @@
+﻿using System;
+using System.Collections.Generic;
+
+namespace PPAI_Revisiones.Modelos.Estados
+{
+    public sealed class Autodetectado : Estado
+    {
+        public override string Nombre => "Autodetectado";
+        public override bool EsAutodetectado => true;
+
+        // registrarEstadoBloqueado(ctx, cambiosEstado, fechaHoraActual, responsable)
+        public override void registrarEstadoBloqueado(
+            EventoSismico ctx,
+            List<CambioDeEstado> cambiosEstado,
+            DateTime fechaHoraActual,
+            Empleado responsable)
+        {
+            // 1️⃣ Buscar y cerrar cambio abierto (si existe)
+            var abierto = BuscarCambioAbierto(cambiosEstado);
+            abierto?.SetFechaHoraFin(fechaHoraActual);
+
+            // 2️⃣ Crear nuevo estado Bloqueado
+            var nuevoEstado = new Bloqueado();
+
+            // 3️⃣ Crear CE y agregarlo
+            var ce = new CambioDeEstado
+            {
+                EstadoActual = nuevoEstado,
+                FechaHoraInicio = fechaHoraActual,
+                FechaHoraFin = null,
+                Responsable = responsable
+            };
+            cambiosEstado.Add(ce);
+
+            // 4️⃣ Actualizar estado del evento
+            ctx.SetEstado(nuevoEstado);
+        }
+
+        // Helper local (evita duplicar código)
+        private static CambioDeEstado BuscarCambioAbierto(List<CambioDeEstado> cambios)
+            => cambios?.Find(c => c.EsEstadoActual());
+    }
+}
