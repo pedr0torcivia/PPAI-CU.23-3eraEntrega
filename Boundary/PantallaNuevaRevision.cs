@@ -1,9 +1,12 @@
+using PPAI_2.Infra.Data;
 using PPAI_Revisiones.Controladores;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
+using System.Linq;              
+
 
 namespace PPAI_Revisiones.Boundary
 {
@@ -14,6 +17,14 @@ namespace PPAI_Revisiones.Boundary
         public PantallaNuevaRevision()
         {
             InitializeComponent();
+            using var ctx = new RedSismicaContext();
+            var flag = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "import.done");
+            if (!File.Exists(flag) && !ctx.EventosSismicos.Any())
+            {
+                BulkTxtImporter.Run(ctx, Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "import"));
+                File.WriteAllText(flag, "ok");
+            }
+
             manejador = new ManejadorRegistrarRespuesta();
         }
 

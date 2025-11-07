@@ -13,6 +13,18 @@ namespace PPAI_2.Infra.Repos
         private readonly RedSismicaContext _ctx;
         public EventoRepositoryEF(RedSismicaContext ctx) => _ctx = ctx;
 
+        public IEnumerable<EventoSismico> GetEventosParaRevision()
+        {
+            return _ctx.EventosSismicos
+                .AsTracking()
+                .Include(e => e.CambiosDeEstado).ThenInclude(c => c.Responsable)
+                .Include(e => e.Alcance)
+                .Include(e => e.Clasificacion)
+                .Include(e => e.Origen)
+                .Include(e => e.Responsable)
+                .ToList();
+        }
+
         public IEnumerable<EventoSismico> GetEventosAutoDetectadosNoRevisados()
         {
             var lista = _ctx.EventosSismicos
@@ -22,19 +34,18 @@ namespace PPAI_2.Infra.Repos
                 .Include(e => e.Origen)
                 .Include(e => e.Responsable)
                 .AsNoTracking()
-                .Where(e =>
-                    e.EstadoActualNombre == "Autodetectado" ||
-                    e.EstadoActualNombre == "Evento sin revisión") // ← filtro real
+                .Where(e => e.EstadoActualNombre == "Autodetectado"
+                         || e.EstadoActualNombre == "Bloqueado") // ← clave
                 .ToList();
-           
+
             foreach (var e in lista)
             {
                 e.MaterializarEstadoDesdeNombre();
-                e.MaterializarEstadosDeCambios(); // ← agrega esto
+                e.MaterializarEstadosDeCambios();
             }
-
             return lista;
         }
+
 
 
         // Para modificar: CARGAR TRACKED (clave)

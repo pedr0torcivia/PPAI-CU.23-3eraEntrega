@@ -6,37 +6,35 @@ namespace PPAI_Revisiones.Modelos.Estados
     public sealed class Bloqueado : Estado
     {
         public override string Nombre => "Bloqueado";
-        public override bool EsBloqueado => true;
 
-        // rechazar(cambiosEstado, es, fechaHoraActual, responsable)
         public override void rechazar(
-            List<CambioDeEstado> cambiosEstado,
+            List<CambioDeEstado> cambiosEstado,   // ✅ mismo orden que en Estado
             EventoSismico ctx,
             DateTime fechaHoraActual,
             Empleado responsable)
         {
-            // 1️ Buscar y cerrar cambio abierto
             var abierto = BuscarCambioAbierto(cambiosEstado);
-            abierto?.SetFechaHoraFin(fechaHoraActual);
+            if (abierto != null && !abierto.FechaHoraFin.HasValue)
+                abierto.SetFechaHoraFin(fechaHoraActual);
 
-            // 2️ Crear nuevo estado Rechazado
-            var nuevoEstado = new Rechazado();
-
-            // 3️ Crear CE y agregarlo
             var ce = new CambioDeEstado
             {
-                EstadoActual = nuevoEstado,
+                Id = Guid.NewGuid(),
+                EventoSismicoId = ctx.Id,
+                EstadoNombre = "Rechazado",
+                EstadoActual = new Rechazado(),
                 FechaHoraInicio = fechaHoraActual,
                 FechaHoraFin = null,
+                ResponsableId = responsable?.Id,
                 Responsable = responsable
             };
+            cambiosEstado.Add(ce);
 
-            // 4️ Actualizar estado del evento
-            ctx.AgregarCambioEstado(ce);
-            ctx.SetEstado(nuevoEstado);
+            ctx.SetEstado(new Rechazado());
         }
 
         private static CambioDeEstado BuscarCambioAbierto(List<CambioDeEstado> cambios)
             => cambios?.Find(c => c.EsEstadoActual());
     }
+
 }

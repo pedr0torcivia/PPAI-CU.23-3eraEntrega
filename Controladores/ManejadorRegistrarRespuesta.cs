@@ -11,7 +11,7 @@ using System.Windows.Forms;
 
 namespace PPAI_Revisiones.Controladores
 {
-    public class ManejadorRegistrarRespuesta : IDisposable
+    public class ManejadorRegistrarRespuesta 
     {
         // Infra (EF)
         private readonly RedSismicaContext _ctx;
@@ -36,12 +36,14 @@ namespace PPAI_Revisiones.Controladores
         // ================== FLUJO PRINCIPAL ==================
         public List<object> RegistrarNuevaRevision(PantallaNuevaRevision pantalla)
         {
-            // 1) Buscar y 2) Ordenar
+            // 1) Cargar tracked + filtrar en dominio
             eventosAutodetectadosNoRevisados = BuscarEventosAutoDetecNoRev();
+
+            // 2) Ordenar
             OrdenarEventos();
 
-            // 3) Proyectar SOLO las columnas que querés mostrar
-            var lista = eventosAutodetectadosNoRevisados
+            // 3) Proyección SOLO para la grilla (guardamos la lista original trackeada)
+            var listaProyectada = eventosAutodetectadosNoRevisados
                 .Select(e => new
                 {
                     e.FechaHoraInicio,
@@ -54,29 +56,31 @@ namespace PPAI_Revisiones.Controladores
                 .Cast<object>()
                 .ToList();
 
-            // Enviar a la pantalla la lista PROYECTADA (no la entidad completa)
-            pantalla.SolicitarSeleccionEvento(lista);
-
-            // Devolver lo mismo por consistencia (si lo usás en otro lado)
-            return lista;
+            pantalla.SolicitarSeleccionEvento(listaProyectada);
+            return listaProyectada;
         }
 
         // ================== BÚSQUEDA Y ORDEN ==================
         private List<EventoSismico> BuscarEventosAutoDetecNoRev()
         {
-            // Usa el repositorio EF (último cambio de estado abierto)
-            var lista = _repo.GetEventosAutoDetectadosNoRevisados().ToList();
+            var todos = _repo.GetEventosParaRevision().ToList(); // ✅ TRACKED
 
-            // Log opcional
-            foreach (var evento in lista)
+            var resultado = new List<EventoSismico>();
+            foreach (var e in todos)
             {
-                var datos = evento.GetDatosOcurrencia();
-                Console.WriteLine($"[EventoSismico] getDatosOcurrencia(): {datos}");
+                // reconstruir objetos Estado para usar métodos del dominio
+                e.MaterializarEstadoDesdeNombre();
+                e.MaterializarEstadosDeCambios();
+
+                if (e.sosAutodetectado() || e.sosEventoSinRevision())
+                {
+                    // (log del CU)
+                    Console.WriteLine($"[EventoSismico] {e.GetDatosOcurrencia()}");
+                    resultado.Add(e);
+                }
             }
-
-            return lista;
+            return resultado;
         }
-
         private void OrdenarEventos()
         {
             eventosAutodetectadosNoRevisados = eventosAutodetectadosNoRevisados
@@ -93,12 +97,13 @@ namespace PPAI_Revisiones.Controladores
             if (eventoBloqueadoTemporal != null && eventoBloqueadoTemporal != nuevoEvento)
                 RevertirBloqueo(eventoBloqueadoTemporal);
 
-            eventoSeleccionado = _repo.GetEventoConSeriesYDetalles(nuevoEvento.Id);
+            eventoSeleccionado = eventosAutodetectadosNoRevisados[indice]; // ya está trackeado
             eventoBloqueadoTemporal = eventoSeleccionado;
 
             // Autodetectado → Bloqueado (delegado al estado del evento)
             ActualizarEventoBloqueado();
             _repo.Guardar(); // persistir
+            ReaplicarFiltroYPintar(pantalla);
 
             pantalla.MostrarMensaje("El evento ha sido BLOQUEADO para su revisión.");
 
@@ -247,42 +252,44 @@ namespace PPAI_Revisiones.Controladores
             }
 
             fechaHoraActual = GetFechaHora();
+            if (responsable == null)
+                responsable = _ctx.Empleados.Include(e => e.Usuario).FirstOrDefault();
 
-            // Delego en Evento → Estado Bloqueado maneja la transición
+            // Bloqueado → Rechazado (sobre la MISMA instancia trackeada)
             eventoSeleccionado.Rechazar(fechaHoraActual, responsable);
+            _repo.Guardar();
 
-            // Quitar evento rechazado de la lista en memoria
-            eventosAutodetectadosNoRevisados.Remove(eventoSeleccionado);
-
-            // Regenerar grilla con los eventos restantes
-            var lista = eventosAutodetectadosNoRevisados.Cast<object>().ToList();
-            pantalla.SolicitarSeleccionEvento(lista);
+            // Reaplicar filtro (el rechazado ya no califica) y repintar
+            ReaplicarFiltroYPintar(pantalla);
             pantalla.RestaurarEstadoInicial();
 
-            // Mensaje con historial
-            string mensaje = "Evento rechazado correctamente.\n\n";
-            mensaje += eventoSeleccionado.GetDetalleEventoSismico() + "\n";
-            mensaje += "CAMBIOS DE ESTADO:\n";
-            foreach (var cambio in eventoSeleccionado.CambiosDeEstado)
-            {
-                var nombre = cambio.EstadoActual?.Nombre ?? "(sin estado)";
-                var inicio = cambio.FechaHoraInicio?.ToString("g") ?? "(sin inicio)";
-                var fin = cambio.FechaHoraFin?.ToString("g") ?? "(en curso)";
-                var resp = cambio.Responsable?.Nombre ?? "(desconocido)";
+            // Para el mensaje, usamos la colección trackeada ya actualizada
+            // (materializamos por las dudas)
+            eventoSeleccionado.MaterializarEstadosDeCambios();
 
-                mensaje += $"- {nombre}: {inicio} → {fin} | Responsable: {resp}\n";
+            var msg = "Evento rechazado correctamente.\n\n";
+            msg += eventoSeleccionado.GetDetalleEventoSismico() + "\n";
+            msg += "CAMBIOS DE ESTADO:\n";
+            foreach (var c in eventoSeleccionado.CambiosDeEstado.OrderBy(x => x.FechaHoraInicio))
+            {
+                var nombre = c.EstadoActual?.Nombre ?? c.EstadoNombre ?? "(sin estado)";
+                var inicio = c.FechaHoraInicio?.ToString("g") ?? "(sin inicio)";
+                var fin = c.FechaHoraFin?.ToString("g") ?? "(en curso)";
+                var resp = c.Responsable?.Nombre ?? "(desconocido)";
+                msg += $"- {nombre}: {inicio} → {fin} | Responsable: {resp}\n";
             }
-            pantalla.MostrarMensaje(mensaje);
+            pantalla.MostrarMensaje(msg);
+
+            eventoSeleccionado = null;
+            eventoBloqueadoTemporal = null;
         }
 
         // ================== REVERSIÓN DE BLOQUEO TEMPORAL ==================
-        private void RevertirBloqueo(EventoSismico evento)
+        private void RevertirBloqueo(EventoSismico ev)
         {
-            // 1) Volver a cargar el evento TRACKED (grafo completo) por Id
-            var ev = _repo.GetEventoConSeriesYDetalles(evento.Id);
             if (ev == null) return;
 
-            // 2) Tomar el último cambio y el anterior (orden por fecha)
+            // trabajar sobre la colección trackeada actual
             var ordenados = ev.CambiosDeEstado
                 .OrderByDescending(c => c.FechaHoraInicio ?? DateTime.MinValue)
                 .ToList();
@@ -290,29 +297,36 @@ namespace PPAI_Revisiones.Controladores
             var ultimo = ordenados.FirstOrDefault();
             var anterior = ordenados.Skip(1).FirstOrDefault();
 
-            // 3) Si el último es Bloqueado → eliminarlo FÍSICAMENTE
             if (ultimo != null && string.Equals(ultimo.EstadoNombre, "Bloqueado", StringComparison.OrdinalIgnoreCase))
             {
-                _ctx.CambiosDeEstado.Remove(ultimo);
+                _ctx.CambiosDeEstado.Remove(ultimo); // ✅ lo sacamos del contexto actual
             }
 
-            // 4) Reabrir el anterior SOLO si estaba cerrado
             if (anterior != null && anterior.FechaHoraFin.HasValue)
             {
                 anterior.FechaHoraFin = null;
-                ev.EstadoActualNombre = anterior.EstadoNombre; // reflejar estado actual persistido
-                ev.MaterializarEstadoDesdeNombre();            // reconstruir objeto EstadoActual
+                ev.EstadoActualNombre = anterior.EstadoNombre;
+                ev.MaterializarEstadoDesdeNombre();
             }
-
-            // (Opcional) Diagnóstico
-            // var estados = string.Join("\n", _ctx.ChangeTracker.Entries().Select(e => $"{e.Entity.GetType().Name} -> {e.State}"));
-            // MessageBox.Show(estados, "TRACKER EF antes de Guardar");
 
             _repo.Guardar();
         }
 
 
+
         // ================== REINICIAR CU ==================
+        private List<object> ProyectarParaGrilla(IEnumerable<EventoSismico> src) =>
+            src.Select(e => new
+            {
+                e.FechaHoraInicio,
+                e.LatitudEpicentro,
+                e.LongitudEpicentro,
+                e.LatitudHipocentro,
+                e.LongitudHipocentro,
+                e.ValorMagnitud
+            })
+            .Cast<object>()
+            .ToList();
         public void ReiniciarCU(PantallaNuevaRevision pantalla)
         {
             if (eventoBloqueadoTemporal != null)
@@ -330,10 +344,36 @@ namespace PPAI_Revisiones.Controladores
             pantalla.RestaurarEstadoInicial();
             pantalla.SolicitarSeleccionEvento(lista);
         }
+// Recalcula la lista de candidatos usando SOLO entidades trackeadas
+private void ReaplicarFiltroYPintar(PantallaNuevaRevision pantalla)
+{
+            // Tomo todas las instancias trackeadas de EventoSismico
+            var todos = _ctx.EventosSismicos.Local.ToList();
 
-        public void Dispose()
-        {
-            _ctx?.Dispose();
-        }
+    var candidatos = new List<EventoSismico>();
+
+    foreach (var e in todos)
+    {
+        // Asegurá objetos de estado (dominio)
+        e.MaterializarEstadoDesdeNombre();
+        e.MaterializarEstadosDeCambios();
+
+        if (e.sosAutodetectado() || e.sosEventoSinRevision())
+            candidatos.Add(e);
+    }
+
+    // Orden y cache en memoria del manejador
+    eventosAutodetectadosNoRevisados = candidatos
+        .OrderByDescending(x => x.FechaHoraInicio)
+        .ToList();
+
+    // Proyección liviana para la grilla
+    var proyeccion = ProyectarParaGrilla(eventosAutodetectadosNoRevisados);
+
+    // (opcional) si tu UI lo necesita para refrescar,
+    // pantalla.LimpiarGrilla(); // set DataSource = null adentro
+    pantalla.SolicitarSeleccionEvento(proyeccion);
+}
+
     }
 }

@@ -26,13 +26,15 @@ namespace PPAI_Revisiones.Modelos.Estados
             // 3️ Crear CE y agregarlo
             var ce = new CambioDeEstado
             {
+                Id = Guid.NewGuid(),
+                EventoSismicoId = ctx.Id,          // <-- FALTA: FK al evento
                 EstadoActual = nuevoEstado,
+                EstadoNombre = "Bloqueado",         // se guarda el nombre
                 FechaHoraInicio = fechaHoraActual,
                 FechaHoraFin = null,
+                ResponsableId = responsable?.Id,    // FK al responsable
                 Responsable = responsable
             };
-            ce.EstadoNombre = "Bloqueado";   // ← **AGREGAR ESTA LÍNEA**
-            ce.ResponsableId = responsable?.Id ?? Guid.Empty;
             cambiosEstado.Add(ce);
 
             // 4️⃣ Actualizar estado del evento

@@ -7,6 +7,7 @@ namespace PPAI_2.Infra.Repos
     public interface IEventoRepository
     {
         IEnumerable<EventoSismico> GetEventosAutoDetectadosNoRevisados();
+        IEnumerable<EventoSismico> GetEventosParaRevision();
         EventoSismico GetEventoConSeriesYDetalles(Guid eventoId);
         void Guardar();
     }
