@@ -7,6 +7,7 @@ using PPAI_Revisiones.Modelos.Estados;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Windows.Forms;
 
 namespace PPAI_Revisiones.Controladores
@@ -124,6 +125,25 @@ namespace PPAI_Revisiones.Controladores
 
             // Delego en el Evento → Estado Autodetectado maneja la transición
             eventoSeleccionado.RegistrarEstadoBloqueado(fechaHoraActual, responsable);
+            // ⬇️ Adjuntar los CE nuevos que EF aún no trackea
+            var nuevos = eventoSeleccionado.CambiosDeEstado
+                .Where(c => _ctx.Entry(c).State == EntityState.Detached)
+                .ToList();
+
+            if (nuevos.Count > 0)
+                _ctx.CambiosDeEstado.AddRange(nuevos);
+
+            // --- Forzar inserción de los CE nuevos ---
+            foreach (var c in eventoSeleccionado.CambiosDeEstado)
+            {
+                var entry = _ctx.Entry(c);
+                if (entry.State == EntityState.Modified || entry.State == EntityState.Unchanged)
+                {
+                    // si no tiene FechaHoraFin o EstadoNombre no existía antes, lo tratamos como nuevo
+                    if (c.FechaHoraFin == null && c.Id != Guid.Empty)
+                        entry.State = EntityState.Added;
+                }
+            }
             _repo.Guardar();
         }
 
@@ -260,9 +280,27 @@ namespace PPAI_Revisiones.Controladores
             eventoSeleccionado.Rechazar(fechaHoraActual, responsable);
 
             // Persistir cambios (incluye el CE Bloqueado previo si no estaba)
+            var nuevos = eventoSeleccionado.CambiosDeEstado
+                .Where(c => _ctx.Entry(c).State == EntityState.Detached)
+                .ToList();
+
+            if (nuevos.Count > 0)
+                _ctx.CambiosDeEstado.AddRange(nuevos);
+
+
+// --- Forzar inserción de los CE nuevos ---
+foreach (var c in eventoSeleccionado.CambiosDeEstado)
+{
+    var entry = _ctx.Entry(c);
+    if (entry.State == EntityState.Modified || entry.State == EntityState.Unchanged)
+    {
+        // si no tiene FechaHoraFin o EstadoNombre no existía antes, lo tratamos como nuevo
+        if (c.FechaHoraFin == null && c.Id != Guid.Empty)
+            entry.State = EntityState.Added;
+    }
+}
             _repo.Guardar();
 
-            // 🔴 CLAVE: traer del contexto los cambios ya persistidos
             _ctx.Entry(eventoSeleccionado).Reload();
             _ctx.Entry(eventoSeleccionado)
                 .Collection(e => e.CambiosDeEstado)
@@ -270,29 +308,15 @@ namespace PPAI_Revisiones.Controladores
                 .Include(c => c.Responsable)
                 .Load();
 
-            // Reconstruyo objetos de estado (evento y cambios)
             eventoSeleccionado.MaterializarEstadoDesdeNombre();
             eventoSeleccionado.MaterializarEstadosDeCambios();
 
-            // Refiltrar y repintar grilla (el Rechazado ya no debe aparecer)
+            // 2) 🚨 AHORA arma y muestra el mensaje
+            MostrarMensajeCambios(pantalla, eventoSeleccionado);
+
+            // 3) recién después repintá la grilla y reseteá UI
             ReaplicarFiltroYPintar(pantalla);
-
-            // Vuelvo UI a estado inicial
             pantalla.RestaurarEstadoInicial();
-
-            // Armo el mensaje con TODOS los cambios (ya sincronizados)
-            var msg = "Evento rechazado correctamente.\n\n";
-            msg += eventoSeleccionado.GetDetalleEventoSismico() + "\n";
-            msg += "CAMBIOS DE ESTADO:\n";
-            foreach (var c in eventoSeleccionado.CambiosDeEstado.OrderBy(x => x.FechaHoraInicio))
-            {
-                var nombre = c.EstadoActual?.Nombre ?? c.EstadoNombre ?? "(sin estado)";
-                var fhI = c.FechaHoraInicio?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-";
-                var fhF = c.FechaHoraFin?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-";
-                var resp = c.Responsable?.Nombre ?? "(s/d)";
-                msg += $" - {nombre} | Inicio: {fhI} | Fin: {fhF} | Responsable: {resp}\n";
-            }
-            pantalla.MostrarMensaje(msg);
         }
 
         // ================== REVERSIÓN DE BLOQUEO TEMPORAL ==================
@@ -380,6 +404,22 @@ namespace PPAI_Revisiones.Controladores
             pantalla.SolicitarSeleccionEvento(proyeccion);
         }
 
+        // HELPER PARA Msj
+        private void MostrarMensajeCambios(PantallaNuevaRevision pantalla, EventoSismico ev)
+        {
+            var msg = "Evento rechazado correctamente.\n\n";
+            msg += ev.GetDetalleEventoSismico() + "\n";
+            msg += "CAMBIOS DE ESTADO:\n";
 
+            foreach (var c in ev.CambiosDeEstado.OrderBy(x => x.FechaHoraInicio ?? DateTime.MinValue))
+            {
+                var nombre = c.EstadoActual?.Nombre ?? c.EstadoNombre ?? "(sin estado)";
+                var inicio = c.FechaHoraInicio?.ToString("g") ?? "(sin inicio)";
+                var fin = c.FechaHoraFin?.ToString("g") ?? "(en curso)";
+                var resp = c.Responsable?.Nombre ?? "(desconocido)";
+                msg += $"- {nombre}: {inicio} → {fin} | Responsable: {resp}\n";
+            }
+            pantalla.MostrarMensaje(msg);
+        }
     }
 }

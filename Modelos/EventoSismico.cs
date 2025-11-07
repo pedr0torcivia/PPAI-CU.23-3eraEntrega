@@ -63,7 +63,13 @@ namespace PPAI_Revisiones.Modelos
             $"Magnitud: {ValorMagnitud}";
 
         // =============== Infra de cambios de estado ===============
-        public void AgregarCambioEstado(CambioDeEstado ce) => CambiosDeEstado.Add(ce);
+        public void AgregarCambioEstado(CambioDeEstado ce)
+        {
+            CambiosDeEstado.Add(ce);
+
+            // 🔴 Si el contexto está disponible, EF lo detectará automáticamente al agregarlo.
+            // Si no, se persistirá explícitamente en el manejador (ver siguiente paso).
+        }
 
         public void SetEstado(Estado estado)
         {
@@ -73,12 +79,13 @@ namespace PPAI_Revisiones.Modelos
 
         // --- NUEVO: reconstruir Estado desde el nombre persistido (para leer de BD) ---
         public void MaterializarEstadoDesdeNombre()
-            => EstadoActual = EstadoFactory.FromName(EstadoActualNombre);
+            => EstadoActual = Estado.FromName(EstadoActualNombre);
 
         public void MaterializarEstadosDeCambios()
         {
+            if (CambiosDeEstado == null) return;
             foreach (var c in CambiosDeEstado)
-                c.EstadoActual = EstadoFactory.FromName(c.EstadoNombre);
+                c.EstadoActual = Estado.FromName(c.EstadoNombre);
         }
 
         // =============== Detalle del evento y series ===============
@@ -121,18 +128,5 @@ namespace PPAI_Revisiones.Modelos
                ?.rechazar(CambiosDeEstado, this, fechaHoraActual, responsable);
     }
 
-    // --- NUEVO: Factory mínima sin tocar tu lógica de estados ---
-    internal static class EstadoFactory
-    {
-        public static Estado FromName(string nombre)
-        {
-            switch ((nombre ?? "").Trim())
-            {
-                case "Autodetectado": return new Autodetectado();
-                case "Bloqueado": return new Bloqueado();
-                case "Rechazado": return new Rechazado();
-                default: return new Autodetectado();
-            }
-        }
-    }
+
 }

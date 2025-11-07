@@ -1,5 +1,6 @@
 ﻿// PPAI_Revisiones.Modelos.Estados/Estado.cs
 using PPAI_Revisiones.Modelos;
+using PPAI_Revisiones.Modelos.Estados;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
@@ -26,4 +27,14 @@ public abstract class Estado
 
     protected static void LanzarInvalida(string transicion)
         => throw new InvalidOperationException($"Transición '{transicion}' no válida para el estado actual.");
+
+    public static Estado FromName(string nombre) => nombre switch
+    {
+        "Autodetectado" => new Autodetectado(),
+        "Bloqueado" => new Bloqueado(),
+        "Rechazado" => new Rechazado(),
+        "Confirmado" => new Confirmado(),
+        _ => null
+    };
+
 }

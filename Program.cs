@@ -40,7 +40,7 @@ namespace PPAI_Revisiones
             {
                 using (var ctx = new RedSismicaContext())
                 {
-                    // Si querés conservar datos, comentá el EnsureDeleted().
+                    // Conservás/volás datos a gusto
                     ctx.Database.EnsureDeleted();
                     ctx.Database.EnsureCreated();
 
