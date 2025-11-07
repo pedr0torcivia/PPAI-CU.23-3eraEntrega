@@ -1,4 +1,4 @@
-﻿// Program.cs
+﻿﻿// Program.cs
 using Microsoft.EntityFrameworkCore;
 using PPAI_2.Infra.Data;
 using System;

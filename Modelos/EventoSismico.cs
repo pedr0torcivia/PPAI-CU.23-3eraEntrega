@@ -1,8 +1,10 @@
+using PPAI_Revisiones.Modelos.Estados; // Autodetectado, Bloqueado, etc.
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.ComponentModel.DataAnnotations.Schema;       // <— agregado
-using PPAI_Revisiones.Modelos.Estados; // Autodetectado, Bloqueado, etc.
+using System.Linq;
+using System.Diagnostics;
+using System.Text;
 
 namespace PPAI_Revisiones.Modelos
 {
@@ -64,12 +66,12 @@ namespace PPAI_Revisiones.Modelos
 
         // =============== Infra de cambios de estado ===============
         public void AgregarCambioEstado(CambioDeEstado ce)
-        {
-            CambiosDeEstado.Add(ce);
+{
+    CambiosDeEstado.Add(ce);
 
-            // 🔴 Si el contexto está disponible, EF lo detectará automáticamente al agregarlo.
-            // Si no, se persistirá explícitamente en el manejador (ver siguiente paso).
-        }
+    // 🔴 Si el contexto está disponible, EF lo detectará automáticamente al agregarlo.
+    // Si no, se persistirá explícitamente en el manejador (ver siguiente paso).
+}
 
         public void SetEstado(Estado estado)
         {
@@ -91,7 +93,7 @@ namespace PPAI_Revisiones.Modelos
         // =============== Detalle del evento y series ===============
         public string GetDetalleEventoSismico()
         {
-            var sb = new System.Text.StringBuilder();
+            var sb = new StringBuilder();
             sb.AppendLine("===== DETALLE DEL EVENTO SÍSMICO =====");
             sb.AppendLine($"Fecha de inicio: {FechaHoraInicio:dd/MM/yyyy HH:mm}");
             sb.AppendLine($"Epicentro: Lat {LatitudEpicentro} / Lon {LongitudEpicentro}");
@@ -100,23 +102,38 @@ namespace PPAI_Revisiones.Modelos
             sb.AppendLine($"Alcance: {Alcance?.GetNombreAlcance() ?? "(sin datos)"}");
             sb.AppendLine($"Clasificación: {Clasificacion?.GetNombreClasificacion() ?? "(sin datos)"}");
             sb.AppendLine($"Origen: {Origen?.GetNombreOrigen() ?? "(sin datos)"}");
+
+            // === Mantiene tu cadena de llamadas ===
             sb.AppendLine(ObtenerDatosSeriesTemporales());
+
+            Debug.WriteLine($"[Evento] {Id} detalle armado (len={sb.Length})");
             return sb.ToString();
         }
 
         public string ObtenerDatosSeriesTemporales()
         {
-            var sb = new System.Text.StringBuilder();
-            foreach (var serie in (SeriesTemporales ?? new List<SerieTemporal>()))
+            var sb = new StringBuilder();
+
+            var series = SeriesTemporales ?? new List<SerieTemporal>();
+            Debug.WriteLine($"[Evento] {Id} series asociadas: {series.Count}");
+
+            // 1) LOOP principal: Evento -> SerieTemporal.GetSeries()
+            foreach (var serie in series)
+            {
                 sb.Append(serie.GetSeries());
+            }
+
+            // 2) Al finalizar el bucle, ordenar por estación (como pediste)
             AgruparInformacionSeriesPorEstacion();
+
             return sb.ToString();
         }
 
         public void AgruparInformacionSeriesPorEstacion()
-            => SeriesTemporales = SeriesTemporales
+            => SeriesTemporales = (SeriesTemporales ?? new List<SerieTemporal>())
                 .OrderBy(s => s.Sismografo?.GetNombreEstacion()?.ToLowerInvariant())
                 .ToList();
+
 
         // =============== Delegación a los ESTADOS (State) ===============
         public void RegistrarEstadoBloqueado(DateTime fechaHoraActual, Empleado responsable)

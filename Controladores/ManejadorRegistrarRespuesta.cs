@@ -12,7 +12,7 @@ using System.Windows.Forms;
 
 namespace PPAI_Revisiones.Controladores
 {
-    public class ManejadorRegistrarRespuesta 
+    public class ManejadorRegistrarRespuesta
     {
         // Infra (EF)
         private readonly RedSismicaContext _ctx;
@@ -37,13 +37,13 @@ namespace PPAI_Revisiones.Controladores
         // ================== FLUJO PRINCIPAL ==================
         public List<object> RegistrarNuevaRevision(PantallaNuevaRevision pantalla)
         {
-            // 1) Cargar tracked + filtrar en dominio
+            // 1) Cargar candidatos (no hace falta que estén trackeados todavía)
             eventosAutodetectadosNoRevisados = BuscarEventosAutoDetecNoRev();
 
             // 2) Ordenar
             OrdenarEventos();
 
-            // 3) Proyección SOLO para la grilla (guardamos la lista original trackeada)
+            // 3) Proyección SOLO para la grilla
             var listaProyectada = eventosAutodetectadosNoRevisados
                 .Select(e => new
                 {
@@ -64,29 +64,29 @@ namespace PPAI_Revisiones.Controladores
         // ================== BÚSQUEDA Y ORDEN ==================
         private List<EventoSismico> BuscarEventosAutoDetecNoRev()
         {
-            var todos = _repo.GetEventosParaRevision().ToList(); // ✅ TRACKED
+            // Este método del repo puede devolver AsNoTracking; acá solo listamos/filtramos.
+            var todos = _repo.GetEventosParaRevision().ToList();
 
             var resultado = new List<EventoSismico>();
             foreach (var e in todos)
             {
-                // reconstruir objetos Estado para usar métodos del dominio
                 e.MaterializarEstadoDesdeNombre();
                 e.MaterializarEstadosDeCambios();
 
                 if (e.sosAutodetectado() || e.sosEventoSinRevision())
                 {
-                    // (log del CU)
                     Console.WriteLine($"[EventoSismico] {e.GetDatosOcurrencia()}");
                     resultado.Add(e);
                 }
             }
             return resultado;
         }
+
         private void OrdenarEventos()
         {
             eventosAutodetectadosNoRevisados = eventosAutodetectadosNoRevisados
-                .OrderByDescending(e => e.FechaHoraInicio)
-                .ToList();
+              .OrderByDescending(e => e.FechaHoraInicio)
+              .ToList();
         }
 
         // ================== SELECCIÓN Y BLOQUEO ==================
@@ -94,24 +94,27 @@ namespace PPAI_Revisiones.Controladores
         {
             var nuevoEvento = eventosAutodetectadosNoRevisados[indice];
 
-            // Si había otro bloqueado temporal, revertir
+            // Si había otro bloqueado temporal, revertir (A) con un ciclo de persistencia separable
             if (eventoBloqueadoTemporal != null && eventoBloqueadoTemporal != nuevoEvento)
                 RevertirBloqueo(eventoBloqueadoTemporal);
 
-            eventoSeleccionado = eventosAutodetectadosNoRevisados[indice]; // ya está trackeado
+            // 🔧 FIX: limpiar tracker entre A y B para evitar “contaminación”
+            _ctx.ChangeTracker.Clear();
+
+            // Cargar B trackeado y con sus relaciones completas
+            eventoSeleccionado = _repo.GetEventoConSeriesYDetalles(nuevoEvento.Id);
             eventoBloqueadoTemporal = eventoSeleccionado;
 
-            // Autodetectado → Bloqueado (delegado al estado del evento)
+            // Autodetectado → Bloqueado
             ActualizarEventoBloqueado();
-            _repo.Guardar(); // persistir
-            ReaplicarFiltroYPintar(pantalla);
 
+            // Refiltrar y repintar
+            ReaplicarFiltroYPintar(pantalla);
             pantalla.MostrarMensaje("El evento ha sido BLOQUEADO para su revisión.");
 
             // Detalles y sismograma
             BuscarDetallesEventoSismico();
             var sismograma = GenerarSismograma();
-
             pantalla.MostrarDetalleEventoSismico(detallesEvento);
             pantalla.MostrarSismograma(sismograma);
 
@@ -123,34 +126,50 @@ namespace PPAI_Revisiones.Controladores
             responsable = BuscarUsuarioLogueado();
             fechaHoraActual = GetFechaHora();
 
-            // Delego en el Evento → Estado Autodetectado maneja la transición
+            // Delego en el Evento (State): crea CE nuevo y setea EstadoActual/EstadoActualNombre
             eventoSeleccionado.RegistrarEstadoBloqueado(fechaHoraActual, responsable);
-            // ⬇️ Adjuntar los CE nuevos que EF aún no trackea
-            var nuevos = eventoSeleccionado.CambiosDeEstado
-                .Where(c => _ctx.Entry(c).State == EntityState.Detached)
-                .ToList();
 
-            if (nuevos.Count > 0)
-                _ctx.CambiosDeEstado.AddRange(nuevos);
+            // Adjuntar el evento si está detached
+            if (_ctx.Entry(eventoSeleccionado).State == EntityState.Detached)
+                _ctx.EventosSismicos.Attach(eventoSeleccionado);
 
-            // --- Forzar inserción de los CE nuevos ---
-            foreach (var c in eventoSeleccionado.CambiosDeEstado)
+            // Solo marcá modificado el nombre de estado del evento
+            _ctx.Entry(eventoSeleccionado).Property(e => e.EstadoActualNombre).IsModified = true;
+
+            // === NO hacer AddRange manual si EF ya los detectó ===
+            // Si algún CE está completamente detached, lo preparo mínimamente y lo marco Added.
+            // OJO: no agregues a DbSet algo que EF ya está trackeando como Added o Modified.
+            foreach (var ce in eventoSeleccionado.CambiosDeEstado)
             {
-                var entry = _ctx.Entry(c);
-                if (entry.State == EntityState.Modified || entry.State == EntityState.Unchanged)
+                var entry = _ctx.Entry(ce);
+
+                if (entry.State == EntityState.Detached)
                 {
-                    // si no tiene FechaHoraFin o EstadoNombre no existía antes, lo tratamos como nuevo
-                    if (c.FechaHoraFin == null && c.Id != Guid.Empty)
-                        entry.State = EntityState.Added;
+                    // FK asegurada por las dudas
+                    ce.EventoSismicoId = eventoSeleccionado.Id;
+
+                    // Que nunca vaya vacío
+                    if (ce.Id == Guid.Empty) ce.Id = Guid.NewGuid();
+
+                    // Marcamos Added (de lo contrario, al estar detached no entra por cascada)
+                    _ctx.Entry(ce).State = EntityState.Added;
+                }
+                else if (entry.State == EntityState.Added)
+                {
+                    // Nada que hacer: ya está para insertarse una sola vez
+                }
+                else
+                {
+                    // Modified/Unchanged/Deleted: no toco nada
                 }
             }
+
+            // Persistir
             _repo.Guardar();
         }
 
         private Empleado BuscarUsuarioLogueado()
         {
-            // Sin DatosMock: tomamos el primer Empleado disponible (o null si no hay)
-            // Si querés algo más específico, filtrá por Usuario.NombreUsuario
             return _ctx.Empleados
                        .Include(e => e.Usuario)
                        .FirstOrDefault();
@@ -170,7 +189,7 @@ namespace PPAI_Revisiones.Controladores
             var extensionCU = new CU_GenerarSismograma();
 
             var ruta = extensionCU.Ejecutar();
-            ruta = ruta?.Trim().Trim('"'); // por si vienen comillas/espacios
+            ruta = ruta?.Trim().Trim('"');
 
             var exists = System.IO.File.Exists(ruta);
             Console.WriteLine($"[Manejador] Ruta devuelta por CU: '{ruta}' | Exists={exists}");
@@ -234,7 +253,6 @@ namespace PPAI_Revisiones.Controladores
                     }
 
                     ActualizarEstadoRechazado(pantalla);
-                    _repo.Guardar(); // persistir
                     break;
 
                 case 3: // Derivar
@@ -255,11 +273,6 @@ namespace PPAI_Revisiones.Controladores
                 eventoSeleccionado.ValorMagnitud <= 0)
                 return false;
 
-            bool modificarAlcance = pantalla.SeleccionoModificarAlcance;
-            bool modificarMagnitud = pantalla.SeleccionoModificarMagnitud;
-            bool modificarOrigen = pantalla.SeleccionoModificarOrigen;
-            bool deseaMapa = pantalla.SeleccionoVisualizarMapa;
-
             return true;
         }
 
@@ -279,28 +292,27 @@ namespace PPAI_Revisiones.Controladores
             // Bloqueado → Rechazado (misma instancia trackeada)
             eventoSeleccionado.Rechazar(fechaHoraActual, responsable);
 
-            // Persistir cambios (incluye el CE Bloqueado previo si no estaba)
-            var nuevos = eventoSeleccionado.CambiosDeEstado
-                .Where(c => _ctx.Entry(c).State == EntityState.Detached)
-                .ToList();
+            // 🔧 FIX: Adjuntar si hace falta y marcar solo lo necesario
+            if (_ctx.Entry(eventoSeleccionado).State == EntityState.Detached)
+                _ctx.EventosSismicos.Attach(eventoSeleccionado);
 
-            if (nuevos.Count > 0)
-                _ctx.CambiosDeEstado.AddRange(nuevos);
+            _ctx.Entry(eventoSeleccionado).Property(e => e.EstadoActualNombre).IsModified = true;
 
+            // 🔧 FIX: NO AddRange manual; setear Added solo si están detached
+            foreach (var ce in eventoSeleccionado.CambiosDeEstado)
+            {
+                var entry = _ctx.Entry(ce);
+                if (entry.State == EntityState.Detached)
+                {
+                    if (ce.Id == Guid.Empty) ce.Id = Guid.NewGuid();
+                    ce.EventoSismicoId = eventoSeleccionado.Id;
+                    _ctx.Entry(ce).State = EntityState.Added;
+                }
+            }
 
-// --- Forzar inserción de los CE nuevos ---
-foreach (var c in eventoSeleccionado.CambiosDeEstado)
-{
-    var entry = _ctx.Entry(c);
-    if (entry.State == EntityState.Modified || entry.State == EntityState.Unchanged)
-    {
-        // si no tiene FechaHoraFin o EstadoNombre no existía antes, lo tratamos como nuevo
-        if (c.FechaHoraFin == null && c.Id != Guid.Empty)
-            entry.State = EntityState.Added;
-    }
-}
             _repo.Guardar();
 
+            // Refrescar instancia
             _ctx.Entry(eventoSeleccionado).Reload();
             _ctx.Entry(eventoSeleccionado)
                 .Collection(e => e.CambiosDeEstado)
@@ -311,10 +323,8 @@ foreach (var c in eventoSeleccionado.CambiosDeEstado)
             eventoSeleccionado.MaterializarEstadoDesdeNombre();
             eventoSeleccionado.MaterializarEstadosDeCambios();
 
-            // 2) 🚨 AHORA arma y muestra el mensaje
             MostrarMensajeCambios(pantalla, eventoSeleccionado);
 
-            // 3) recién después repintá la grilla y reseteá UI
             ReaplicarFiltroYPintar(pantalla);
             pantalla.RestaurarEstadoInicial();
         }
@@ -324,8 +334,17 @@ foreach (var c in eventoSeleccionado.CambiosDeEstado)
         {
             if (ev == null) return;
 
-            // trabajar sobre la colección trackeada actual
-            var ordenados = ev.CambiosDeEstado
+            // Detach si hay una copia local trackeada
+            var currentTracking = _ctx.EventosSismicos.Local.FirstOrDefault(e => e.Id == ev.Id);
+            if (currentTracking != null)
+                _ctx.Entry(currentTracking).State = EntityState.Detached;
+
+            // Nueva instancia limpia
+            var evTracked = _repo.GetEventoParaReversionDeBloqueo(ev.Id);
+            if (evTracked == null) return;
+
+            // Eliminar último "Bloqueado" y reabrir anterior
+            var ordenados = evTracked.CambiosDeEstado
                 .OrderByDescending(c => c.FechaHoraInicio ?? DateTime.MinValue)
                 .ToList();
 
@@ -334,20 +353,21 @@ foreach (var c in eventoSeleccionado.CambiosDeEstado)
 
             if (ultimo != null && string.Equals(ultimo.EstadoNombre, "Bloqueado", StringComparison.OrdinalIgnoreCase))
             {
-                _ctx.CambiosDeEstado.Remove(ultimo); // ✅ lo sacamos del contexto actual
+                _ctx.CambiosDeEstado.Remove(ultimo);
             }
 
             if (anterior != null && anterior.FechaHoraFin.HasValue)
             {
                 anterior.FechaHoraFin = null;
-                ev.EstadoActualNombre = anterior.EstadoNombre;
-                ev.MaterializarEstadoDesdeNombre();
+                evTracked.EstadoActualNombre = anterior.EstadoNombre;
+                evTracked.MaterializarEstadoDesdeNombre();
             }
 
             _repo.Guardar();
+
+            // 🔧 FIX: cortar aquí el ciclo de tracking de A
+            _ctx.ChangeTracker.Clear();
         }
-
-
 
         // ================== REINICIAR CU ==================
         private List<object> ProyectarParaGrilla(IEnumerable<EventoSismico> src) =>
@@ -362,6 +382,7 @@ foreach (var c in eventoSeleccionado.CambiosDeEstado)
             })
             .Cast<object>()
             .ToList();
+
         public void ReiniciarCU(PantallaNuevaRevision pantalla)
         {
             if (eventoBloqueadoTemporal != null)
@@ -375,14 +396,14 @@ foreach (var c in eventoSeleccionado.CambiosDeEstado)
             eventosAutodetectadosNoRevisados = BuscarEventosAutoDetecNoRev();
             OrdenarEventos();
 
-            var lista = eventosAutodetectadosNoRevisados.Cast<object>().ToList();
+            var proyeccion = ProyectarParaGrilla(eventosAutodetectadosNoRevisados);
             pantalla.RestaurarEstadoInicial();
-            pantalla.SolicitarSeleccionEvento(lista);
+            pantalla.SolicitarSeleccionEvento(proyeccion);
         }
-        // Recalcula la lista de candidatos usando SOLO entidades trackeadas
+
+        // Recalcula la lista de candidatos
         private void ReaplicarFiltroYPintar(PantallaNuevaRevision pantalla)
         {
-            // Traigo TRACKED e incluyo cambios/responsable (ya lo hace el repo)
             var todos = _repo.GetEventosParaRevision().ToList();
 
             var candidatos = new List<EventoSismico>();
@@ -391,14 +412,13 @@ foreach (var c in eventoSeleccionado.CambiosDeEstado)
                 e.MaterializarEstadoDesdeNombre();
                 e.MaterializarEstadosDeCambios();
 
-                // Solo mostrar los “pendientes” (Autodetectado o Bloqueado)
                 if (e.EstadoActualNombre == "Autodetectado" || e.EstadoActualNombre == "Bloqueado")
                     candidatos.Add(e);
             }
 
             eventosAutodetectadosNoRevisados = candidatos
-                .OrderByDescending(x => x.FechaHoraInicio)
-                .ToList();
+              .OrderByDescending(x => x.FechaHoraInicio)
+              .ToList();
 
             var proyeccion = ProyectarParaGrilla(eventosAutodetectadosNoRevisados);
             pantalla.SolicitarSeleccionEvento(proyeccion);

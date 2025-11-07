@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
-using System.Linq;              
+using System.Linq;
 
 
 namespace PPAI_Revisiones.Boundary
@@ -331,4 +331,5 @@ namespace PPAI_Revisiones.Boundary
         public bool SeleccionoModificarOrigen => rbtnModOrigenSi.Checked;
         public bool SeleccionoVisualizarMapa => rbtnMapaSi.Checked;
     }
+
 }

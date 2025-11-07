@@ -13,15 +13,17 @@ namespace PPAI_2.Infra.Repos
         private readonly RedSismicaContext _ctx;
         public EventoRepositoryEF(RedSismicaContext ctx) => _ctx = ctx;
 
+        // EventoRepositoryEF.cs
+
         public IEnumerable<EventoSismico> GetEventosParaRevision()
         {
             return _ctx.EventosSismicos
-                .AsTracking()
+                .AsNoTracking() // Correcto para el CU
                 .Include(e => e.CambiosDeEstado).ThenInclude(c => c.Responsable)
-                .Include(e => e.Alcance)
-                .Include(e => e.Clasificacion)
-                .Include(e => e.Origen)
-                .Include(e => e.Responsable)
+                .Include(e => e.Alcance)     // <— AÑADIDO: Carga la referencia Alcance
+                .Include(e => e.Clasificacion) // <— AÑADIDO: Carga la referencia Clasificacion
+                .Include(e => e.Origen)      // <— AÑADIDO: Carga la referencia Origen
+                .Include(e => e.Responsable) // Responsable del Evento
                 .ToList();
         }
 
@@ -52,10 +54,18 @@ namespace PPAI_2.Infra.Repos
         public EventoSismico GetEventoConSeriesYDetalles(Guid eventoId)
         {
             var e = _ctx.EventosSismicos
-                .AsTracking() // ← clave
+                .AsTracking()
                 .Include(ev => ev.CambiosDeEstado).ThenInclude(c => c.Responsable)
-                .Include(ev => ev.SeriesTemporales).ThenInclude(st => st.Muestras)
-                    .ThenInclude(m => m.DetalleMuestraSismica)
+                // Carga de Estación/Sismógrafo (Necesario para ordenar y mostrar el nombre)
+                .Include(ev => ev.SeriesTemporales)
+                    .ThenInclude(st => st.Sismografo)
+                        .ThenInclude(sis => sis.Estacion) // <-- CRÍTICO: Carga Estacion
+                                                          // Carga de Muestras/Detalles/TipoDeDato (Necesario para el detalle de mediciones)
+                .Include(ev => ev.SeriesTemporales)
+                    .ThenInclude(st => st.Muestras)
+                        .ThenInclude(m => m.DetalleMuestraSismica)
+                            .ThenInclude(d => d.TipoDeDato) // <-- CRÍTICO: Carga TipoDeDato
+                                                            // Catálogos principales (para evitar NullReferenceException)
                 .Include(ev => ev.Alcance)
                 .Include(ev => ev.Clasificacion)
                 .Include(ev => ev.Origen)
@@ -64,7 +74,15 @@ namespace PPAI_2.Infra.Repos
 
             e?.MaterializarEstadoDesdeNombre();
             return e;
+        }
 
+        public EventoSismico GetEventoParaReversionDeBloqueo(Guid eventoId)
+        {
+            return _ctx.EventosSismicos
+                .AsTracking()
+                .Include(e => e.CambiosDeEstado)
+                    .ThenInclude(c => c.Responsable)
+                .FirstOrDefault(e => e.Id == eventoId);
         }
 
         public void Guardar()

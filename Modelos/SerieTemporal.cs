@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 namespace PPAI_Revisiones.Modelos
@@ -21,23 +22,26 @@ namespace PPAI_Revisiones.Modelos
         public string GetSeries()
         {
             var bloqueMuestras = new System.Text.StringBuilder();
-            int numMuestra = 1;
 
-            foreach (var muestra in Muestras ?? new List<MuestraSismica>())
+            var muestras = (Muestras ?? new List<MuestraSismica>())
+                           .OrderBy(x => x.FechaHoraMuestra)
+                           .ToList();
+
+            int numMuestra = 1;
+            foreach (var muestra in muestras)
             {
-                Console.WriteLine("[SerieTemporal → Muestra] getDatos()");
                 bloqueMuestras.AppendLine($"\n  • Muestra #{numMuestra++}");
-                bloqueMuestras.Append(muestra.GetDatos()); // ← segundo loop vive adentro
+                bloqueMuestras.Append(muestra.GetDatos());   // mantiene tu cadena de llamadas
             }
 
-            Console.WriteLine("[SerieTemporal → Sismografo] getNombreEstacion()");
-            var sismografo = Sismografo;
-
-            Console.WriteLine("[Sismografo → EstacionSismologica] getNombreEstacion()");
-            string nombreEstacion = sismografo?.GetNombreEstacion() ?? "(sin estación)";
+            // Encabezado con la estación (una sola vez por serie)
+            string nombreEstacion = Sismografo?.GetNombreEstacion() ?? "(sin estación)";
 
             var sb = new System.Text.StringBuilder();
             sb.AppendLine($"\nEstación: {nombreEstacion}");
+            if (muestras.Count == 0)
+                sb.AppendLine("    (sin muestras)");
+
             sb.Append(bloqueMuestras.ToString());
             return sb.ToString();
         }

@@ -1,7 +1,13 @@
 ﻿// RedSismicaContext.cs
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Query.Internal;
 using PPAI_Revisiones.Modelos;
 using System;
+using System.Collections.Generic;   // para HashSet<>
+using System.Diagnostics;            // para Debug.WriteLine
+using System.Linq;
+using System.Threading;              // para CancellationToken
+using System.Threading.Tasks;        // para Task
 
 namespace PPAI_2.Infra.Data
 {
@@ -25,6 +31,12 @@ namespace PPAI_2.Infra.Data
         {
             var dbPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "redsismica.db");
             options.UseSqlite($"Data Source={dbPath}");
+
+            // TrackAll por defecto; elegimos AsNoTracking/AsTracking por método.
+            options.UseQueryTrackingBehavior(QueryTrackingBehavior.TrackAll);
+
+            // Si usás un compilador custom, mantenelo.
+           // options.ReplaceService<IQueryCompiler, CustomQueryCompiler>();
         }
 
         protected override void OnModelCreating(ModelBuilder mb)
@@ -35,7 +47,7 @@ namespace PPAI_2.Infra.Data
                 e.ToTable("EventosSismicos");
                 e.HasKey(x => x.Id);
 
-                e.Ignore(x => x.EstadoActual);    // Solo persisto el nombre
+                e.Ignore(x => x.EstadoActual);    // solo persistimos el nombre
                 e.Property(x => x.EstadoActualNombre).HasMaxLength(100);
 
                 e.HasMany(x => x.CambiosDeEstado)
@@ -62,10 +74,18 @@ namespace PPAI_2.Infra.Data
             {
                 c.ToTable("CambiosDeEstado");
                 c.HasKey(x => x.Id);
+
+                // El Id lo genera la app; EF NO debe generarlo.
+                c.Property(x => x.Id).ValueGeneratedNever();
+
                 c.Property(x => x.EstadoNombre).HasMaxLength(100);
                 c.Ignore(x => x.EstadoActual);
 
-                c.HasOne(x => x.Responsable).WithMany().HasForeignKey(x => x.ResponsableId).OnDelete(DeleteBehavior.Restrict);
+                c.HasOne(x => x.Responsable)
+                    .WithMany()
+                    .HasForeignKey(x => x.ResponsableId)
+                    .OnDelete(DeleteBehavior.Restrict);
+
                 c.Property(x => x.FechaHoraInicio).IsRequired(false);
                 c.Property(x => x.FechaHoraFin).IsRequired(false);
             });
@@ -136,5 +156,60 @@ namespace PPAI_2.Infra.Data
                 .HasForeignKey(x => x.UsuarioId)
                 .OnDelete(DeleteBehavior.Restrict);
         }
+
+        // ======================= AIRBAG DE UNICIDAD =======================
+        public override int SaveChanges()
+        {
+            EnsureUniqueCambioDeEstadoIds();
+            return base.SaveChanges();
+        }
+
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            EnsureUniqueCambioDeEstadoIds();
+            return base.SaveChangesAsync(cancellationToken);
+        }
+
+        private void EnsureUniqueCambioDeEstadoIds()
+        {
+            // 1) CE en estado Added (posibles inserts)
+            var addedCEs = ChangeTracker.Entries<CambioDeEstado>()
+                                        .Where(e => e.State == EntityState.Added)
+                                        .Select(e => e.Entity)
+                                        .ToList();
+
+            if (addedCEs.Count == 0) return;
+
+            // 2) Detectar duplicados dentro del mismo batch
+            var seen = new HashSet<Guid>();
+
+            foreach (var ce in addedCEs)
+            {
+                if (ce.Id == Guid.Empty) ce.Id = Guid.NewGuid();
+
+                var spins = 0;
+
+                // Duplicados en el batch actual
+                while (seen.Contains(ce.Id))
+                {
+                    ce.Id = Guid.NewGuid();
+                    if (++spins > 10)
+                        throw new InvalidOperationException("No se pudo generar un GUID único (duplicado en batch).");
+                }
+
+                // Duplicados contra la BD
+                // (si te preocupa rendimiento, eliminá este chequeo al finalizar la depuración)
+                while (CambiosDeEstado.AsNoTracking().Any(x => x.Id == ce.Id))
+                {
+                    ce.Id = Guid.NewGuid();
+                    if (++spins > 20)
+                        throw new InvalidOperationException("No se pudo generar un GUID único (existe ya en BD).");
+                }
+
+                seen.Add(ce.Id);
+                Debug.WriteLine($"[EnsureUniqueCambioDeEstadoIds] CE preparado: {ce.Id} -> Evento {ce.EventoSismicoId}");
+            }
+        }
+        // =================================================================
     }
 }

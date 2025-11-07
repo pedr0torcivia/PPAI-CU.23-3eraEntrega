@@ -8,6 +8,7 @@ namespace PPAI_2.Infra.Repos
     {
         IEnumerable<EventoSismico> GetEventosAutoDetectadosNoRevisados();
         IEnumerable<EventoSismico> GetEventosParaRevision();
+        EventoSismico GetEventoParaReversionDeBloqueo(Guid eventoId);
         EventoSismico GetEventoConSeriesYDetalles(Guid eventoId);
         void Guardar();
     }
