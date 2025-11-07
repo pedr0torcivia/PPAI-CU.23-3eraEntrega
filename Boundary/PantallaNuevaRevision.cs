@@ -67,11 +67,15 @@ namespace PPAI_Revisiones.Boundary
 
         public void SolicitarSeleccionEvento(List<object> eventos)
         {
-            gridEventos.AutoGenerateColumns = true;   // o false si definís columnas a mano
-            gridEventos.DataSource = null;            // limpia binding previo
-            gridEventos.Columns.Clear();              // opcional, por si quedaron columnas
+            gridEventos.AutoGenerateColumns = true;
+            gridEventos.DataSource = null;
+            gridEventos.Columns.Clear();
             gridEventos.DataSource = eventos;
+
+            // 🔴 Asegura repintado en WinForms cuando la lista anterior tenía misma forma
+            gridEventos.Refresh();
         }
+
 
 
         private void gridEventos_SelectionChanged(object sender, EventArgs e)

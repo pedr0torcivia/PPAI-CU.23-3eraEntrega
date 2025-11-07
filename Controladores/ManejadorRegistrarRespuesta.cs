@@ -124,6 +124,7 @@ namespace PPAI_Revisiones.Controladores
 
             // Delego en el Evento → Estado Autodetectado maneja la transición
             eventoSeleccionado.RegistrarEstadoBloqueado(fechaHoraActual, responsable);
+            _repo.Guardar();
         }
 
         private Empleado BuscarUsuarioLogueado()
@@ -255,33 +256,43 @@ namespace PPAI_Revisiones.Controladores
             if (responsable == null)
                 responsable = _ctx.Empleados.Include(e => e.Usuario).FirstOrDefault();
 
-            // Bloqueado → Rechazado (sobre la MISMA instancia trackeada)
+            // Bloqueado → Rechazado (misma instancia trackeada)
             eventoSeleccionado.Rechazar(fechaHoraActual, responsable);
+
+            // Persistir cambios (incluye el CE Bloqueado previo si no estaba)
             _repo.Guardar();
 
-            // Reaplicar filtro (el rechazado ya no califica) y repintar
-            ReaplicarFiltroYPintar(pantalla);
-            pantalla.RestaurarEstadoInicial();
+            // 🔴 CLAVE: traer del contexto los cambios ya persistidos
+            _ctx.Entry(eventoSeleccionado).Reload();
+            _ctx.Entry(eventoSeleccionado)
+                .Collection(e => e.CambiosDeEstado)
+                .Query()
+                .Include(c => c.Responsable)
+                .Load();
 
-            // Para el mensaje, usamos la colección trackeada ya actualizada
-            // (materializamos por las dudas)
+            // Reconstruyo objetos de estado (evento y cambios)
+            eventoSeleccionado.MaterializarEstadoDesdeNombre();
             eventoSeleccionado.MaterializarEstadosDeCambios();
 
+            // Refiltrar y repintar grilla (el Rechazado ya no debe aparecer)
+            ReaplicarFiltroYPintar(pantalla);
+
+            // Vuelvo UI a estado inicial
+            pantalla.RestaurarEstadoInicial();
+
+            // Armo el mensaje con TODOS los cambios (ya sincronizados)
             var msg = "Evento rechazado correctamente.\n\n";
             msg += eventoSeleccionado.GetDetalleEventoSismico() + "\n";
             msg += "CAMBIOS DE ESTADO:\n";
             foreach (var c in eventoSeleccionado.CambiosDeEstado.OrderBy(x => x.FechaHoraInicio))
             {
                 var nombre = c.EstadoActual?.Nombre ?? c.EstadoNombre ?? "(sin estado)";
-                var inicio = c.FechaHoraInicio?.ToString("g") ?? "(sin inicio)";
-                var fin = c.FechaHoraFin?.ToString("g") ?? "(en curso)";
-                var resp = c.Responsable?.Nombre ?? "(desconocido)";
-                msg += $"- {nombre}: {inicio} → {fin} | Responsable: {resp}\n";
+                var fhI = c.FechaHoraInicio?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-";
+                var fhF = c.FechaHoraFin?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-";
+                var resp = c.Responsable?.Nombre ?? "(s/d)";
+                msg += $" - {nombre} | Inicio: {fhI} | Fin: {fhF} | Responsable: {resp}\n";
             }
             pantalla.MostrarMensaje(msg);
-
-            eventoSeleccionado = null;
-            eventoBloqueadoTemporal = null;
         }
 
         // ================== REVERSIÓN DE BLOQUEO TEMPORAL ==================
@@ -344,36 +355,31 @@ namespace PPAI_Revisiones.Controladores
             pantalla.RestaurarEstadoInicial();
             pantalla.SolicitarSeleccionEvento(lista);
         }
-// Recalcula la lista de candidatos usando SOLO entidades trackeadas
-private void ReaplicarFiltroYPintar(PantallaNuevaRevision pantalla)
-{
-            // Tomo todas las instancias trackeadas de EventoSismico
-            var todos = _ctx.EventosSismicos.Local.ToList();
+        // Recalcula la lista de candidatos usando SOLO entidades trackeadas
+        private void ReaplicarFiltroYPintar(PantallaNuevaRevision pantalla)
+        {
+            // Traigo TRACKED e incluyo cambios/responsable (ya lo hace el repo)
+            var todos = _repo.GetEventosParaRevision().ToList();
 
-    var candidatos = new List<EventoSismico>();
+            var candidatos = new List<EventoSismico>();
+            foreach (var e in todos)
+            {
+                e.MaterializarEstadoDesdeNombre();
+                e.MaterializarEstadosDeCambios();
 
-    foreach (var e in todos)
-    {
-        // Asegurá objetos de estado (dominio)
-        e.MaterializarEstadoDesdeNombre();
-        e.MaterializarEstadosDeCambios();
+                // Solo mostrar los “pendientes” (Autodetectado o Bloqueado)
+                if (e.EstadoActualNombre == "Autodetectado" || e.EstadoActualNombre == "Bloqueado")
+                    candidatos.Add(e);
+            }
 
-        if (e.sosAutodetectado() || e.sosEventoSinRevision())
-            candidatos.Add(e);
-    }
+            eventosAutodetectadosNoRevisados = candidatos
+                .OrderByDescending(x => x.FechaHoraInicio)
+                .ToList();
 
-    // Orden y cache en memoria del manejador
-    eventosAutodetectadosNoRevisados = candidatos
-        .OrderByDescending(x => x.FechaHoraInicio)
-        .ToList();
+            var proyeccion = ProyectarParaGrilla(eventosAutodetectadosNoRevisados);
+            pantalla.SolicitarSeleccionEvento(proyeccion);
+        }
 
-    // Proyección liviana para la grilla
-    var proyeccion = ProyectarParaGrilla(eventosAutodetectadosNoRevisados);
-
-    // (opcional) si tu UI lo necesita para refrescar,
-    // pantalla.LimpiarGrilla(); // set DataSource = null adentro
-    pantalla.SolicitarSeleccionEvento(proyeccion);
-}
 
     }
 }
