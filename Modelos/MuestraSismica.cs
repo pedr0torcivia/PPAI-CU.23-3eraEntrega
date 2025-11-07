@@ -1,14 +1,13 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.Text;
+
 
 namespace PPAI_Revisiones.Modelos
 {
     public class MuestraSismica
     {
         public Guid Id { get; set; } = Guid.NewGuid();
-        public Guid SerieTemporalId { get; set; }   // <-- NUEVO
+        public Guid SerieTemporalId { get; set; }   
 
         // Esta propiedad debe existir en la tabla MuestrasSismicas
         public DateTime FechaHoraMuestra { get; set; }
@@ -19,6 +18,7 @@ namespace PPAI_Revisiones.Modelos
         {
             var sb = new System.Text.StringBuilder();
             sb.AppendLine($"    Fecha: {FechaHoraMuestra:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine($"    [TRACE] Id Muestra: {Id}");
 
             var detalles = DetalleMuestraSismica ?? new List<DetalleMuestra>();
             sb.AppendLine($"    [TRACE] Detalles en esta muestra: {detalles.Count}");

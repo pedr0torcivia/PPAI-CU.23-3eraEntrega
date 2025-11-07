@@ -350,32 +350,79 @@ internal static class BulkTxtImporter
             if (fkSkip > 0) Console.WriteLine($"[SEED] Muestras: saltadas por FK={fkSkip}");
         }
 
-        // DETALLES (FK-safe)
+        // DETALLES (FK-safe con mapeo por Denominación o por Id) — SIN GroupBy en EF
         if (File.Exists(detallesPath))
         {
+            // Asegura que Series/Muestras/Tipos estén persistidos
+            ctx.SaveChanges();
+            ctx.ChangeTracker.Clear();
+
+            // Cache: Muestras por Id
+            var muestrasOK = ctx.Muestras.AsNoTracking()
+                                 .Select(m => m.Id)
+                                 .ToHashSet();
+
+            // Cache Tipos de Dato en memoria
+            var tiposList = ctx.TiposDeDato.AsNoTracking().ToList();
+            var tiposPorId = tiposList.ToDictionary(t => t.Id, t => t);
+            var tiposPorDenom = new Dictionary<string, TipoDeDato>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in tiposList)
+            {
+                var key = (t.Denominacion ?? string.Empty).Trim();
+                if (!tiposPorDenom.ContainsKey(key))
+                    tiposPorDenom[key] = t;
+            }
+
             var rows = ReadCsv(detallesPath);
             int ins = 0, fkSkip = 0;
+
             foreach (var r in rows)
             {
                 var id = GetGuid(r, "Id") ?? Guid.NewGuid();
-                if (ctx.DetallesMuestra.Any(x => x.Id == id)) continue;
+                if (ctx.DetallesMuestra.AsNoTracking().Any(x => x.Id == id))
+                    continue;
 
                 var muestraId = GetGuid(r, "MuestraSismicaId");
-                var tipoId = GetGuid(r, "TipoDeDatoId");
-                if (muestraId == null || tipoId == null || ctx.Muestras.Find(muestraId) == null || ctx.TiposDeDato.Find(tipoId) == null)
-                { fkSkip++; continue; }
+                if (muestraId == null || !muestrasOK.Contains(muestraId.Value))
+                {
+                    fkSkip++;
+                    Console.WriteLine($"[SEED] Detalle {id}: muestra inexistente -> skip");
+                    continue;
+                }
+
+                // Resolver TipoDeDato
+                Guid? tipoId = GetGuid(r, "TipoDeDatoId");
+                if (tipoId.HasValue && !tiposPorId.ContainsKey(tipoId.Value))
+                    tipoId = null;
+
+                if (!tipoId.HasValue)
+                {
+                    var denomKey = (Get(r, "TipoDeDatoDenominacion") ?? Get(r, "TipoDeDato") ?? string.Empty).Trim();
+                    if (!string.IsNullOrWhiteSpace(denomKey) && tiposPorDenom.TryGetValue(denomKey, out var tipo))
+                        tipoId = tipo.Id;
+                }
+
+                if (!tipoId.HasValue)
+                {
+                    fkSkip++;
+                    Console.WriteLine($"[SEED] Detalle {id}: TipoDeDato no resuelto (ni Id ni Denominación) -> skip");
+                    continue;
+                }
 
                 var d = new DetalleMuestra
                 {
                     Id = id,
-                    Valor = GetDouble(r, "Valor") ?? 0,
                     MuestraSismicaId = muestraId.Value,
-                    TipoDeDatoId = tipoId.Value
+                    TipoDeDatoId = tipoId.Value,
+                    Valor = GetDouble(r, "Valor") ?? 0
                 };
-                ctx.Add(d); ins++;
+
+                ctx.DetallesMuestra.Add(d);
+                ins++;
             }
+
             if (ins > 0) ctx.SaveChanges();
-            if (fkSkip > 0) Console.WriteLine($"[SEED] DetalleMuestra: saltadas por FK={fkSkip}");
+            Console.WriteLine($"[SEED] DetallesMuestra insertadas={ins}, saltadas por FK={fkSkip}");
         }
     }
 
