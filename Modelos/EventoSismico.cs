@@ -117,6 +117,9 @@ namespace PPAI_Revisiones.Modelos
             var series = SeriesTemporales ?? new List<SerieTemporal>();
             Debug.WriteLine($"[Evento] {Id} series asociadas: {series.Count}");
 
+            sb.AppendLine($"[TRACE] Series asociadas al evento: {series.Count}");
+
+
             // 1) LOOP principal: Evento -> SerieTemporal.GetSeries()
             foreach (var serie in series)
             {
@@ -125,6 +128,8 @@ namespace PPAI_Revisiones.Modelos
 
             // 2) Al finalizar el bucle, ordenar por estación (como pediste)
             AgruparInformacionSeriesPorEstacion();
+            sb.AppendLine("[TRACE] Series ordenadas por nombre de estación.");
+
 
             return sb.ToString();
         }

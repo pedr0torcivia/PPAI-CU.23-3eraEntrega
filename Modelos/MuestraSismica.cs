@@ -17,11 +17,11 @@ namespace PPAI_Revisiones.Modelos
 
         public string GetDatos()
         {
-            var sb = new StringBuilder();
+            var sb = new System.Text.StringBuilder();
             sb.AppendLine($"    Fecha: {FechaHoraMuestra:yyyy-MM-dd HH:mm:ss}");
 
             var detalles = DetalleMuestraSismica ?? new List<DetalleMuestra>();
-            Debug.WriteLine($"[Muestra] {Id} detalles={detalles.Count}");
+            sb.AppendLine($"    [TRACE] Detalles en esta muestra: {detalles.Count}");
 
             if (detalles.Count == 0)
             {
@@ -29,10 +29,9 @@ namespace PPAI_Revisiones.Modelos
                 return sb.ToString();
             }
 
-            // Mantiene tu cadena: Muestra -> DetalleMuestra -> TipoDeDato.GetDatos()
             foreach (var d in detalles)
             {
-                var tipo = d.TipoDeDato?.GetDatos() ?? "(tipo)"; // delega a TipoDeDato
+                var tipo = d.TipoDeDato?.GetDatos() ?? "(tipo)";
                 var um = d.TipoDeDato?.NombreUnidadMedida ?? "";
                 sb.AppendLine($"      {tipo}: {d.Valor:0.######} {um}");
             }

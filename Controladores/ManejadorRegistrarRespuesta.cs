@@ -181,6 +181,9 @@ namespace PPAI_Revisiones.Controladores
         private void BuscarDetallesEventoSismico()
         {
             detallesEvento = eventoSeleccionado?.GetDetalleEventoSismico() ?? "(Evento nulo)";
+
+            MessageBox.Show(detallesEvento, "TRACE - Series y Muestras por estación",
+                  MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private string GenerarSismograma()

@@ -27,24 +27,25 @@ namespace PPAI_Revisiones.Modelos
                            .OrderBy(x => x.FechaHoraMuestra)
                            .ToList();
 
-            int numMuestra = 1;
-            foreach (var muestra in muestras)
-            {
-                bloqueMuestras.AppendLine($"\n  • Muestra #{numMuestra++}");
-                bloqueMuestras.Append(muestra.GetDatos());   // mantiene tu cadena de llamadas
-            }
-
-            // Encabezado con la estación (una sola vez por serie)
             string nombreEstacion = Sismografo?.GetNombreEstacion() ?? "(sin estación)";
 
             var sb = new System.Text.StringBuilder();
             sb.AppendLine($"\nEstación: {nombreEstacion}");
+            sb.AppendLine($"[TRACE] Serie {Id} → muestras: {muestras.Count}");
+
             if (muestras.Count == 0)
                 sb.AppendLine("    (sin muestras)");
 
-            sb.Append(bloqueMuestras.ToString());
+            int numMuestra = 1;
+            foreach (var muestra in muestras)
+            {
+                sb.AppendLine($"\n  • Muestra #{numMuestra++}");
+                sb.Append(muestra.GetDatos()); // mantiene tu cadena de llamadas
+            }
+
             return sb.ToString();
         }
+
 
     }
 }
