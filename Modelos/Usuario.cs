@@ -1,13 +1,10 @@
-using System;
-
-namespace PPAI_Revisiones.Modelos
+namespace PPAI_Revisiones.Dominio
 {
     public class Usuario
     {
-        public Guid Id { get; set; } = Guid.NewGuid();
-
-        public string NombreUsuario { get; set; }
         public string Contraseña { get; set; }
-
+        public string NombreUsuario { get; set; }
+        public Empleado Empleado { get; set; }   // 1 a 1
+        public string GetNombreUsuario() => NombreUsuario;
     }
 }

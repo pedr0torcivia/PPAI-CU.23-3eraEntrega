@@ -1,49 +1,63 @@
-using PPAI_Revisiones.Modelos.Estados; // Autodetectado, Bloqueado, etc.
+using PPAI_Revisiones.Dominio;
+using PPAI_Revisiones.Modelos.Estados;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations.Schema;       // <— agregado
-using System.Linq;
 using System.Diagnostics;
+using System.Linq;
 using System.Text;
 
 namespace PPAI_Revisiones.Modelos
 {
     public class EventoSismico
     {
-        // =============== Datos básicos ===============
-        public Guid Id { get; set; } = Guid.NewGuid();
-        public DateTime FechaHoraInicio { get; set; }
-        public DateTime FechaHoraDeteccion { get; set; }
+        // ===== Dominio requerido =====
+        public DateTime? FechaHoraFin { get; set; }             // dominio
+        public DateTime FechaHoraOcurrencia { get; set; }      // dominio
         public double LatitudEpicentro { get; set; }
-        public double LongitudEpicentro { get; set; }
         public double LatitudHipocentro { get; set; }
+        public double LongitudEpicentro { get; set; }
         public double LongitudHipocentro { get; set; }
         public double ValorMagnitud { get; set; }
 
-        // =============== Estado (patrón State) ===============
-        // Objeto en memoria (NO se mapea)
-        [NotMapped]                                         // <— agregado
-        public Estado EstadoActual { get; private set; }
+        public ClasificacionSismo Clasificacion { get; set; }       // 1..1
+        public OrigenDeGeneracion OrigenDeGeneracion { get; set; }  // 1..1
+        public AlcanceSismo Alcance { get; set; }             // 1..1
+        public Estado Estado { get; private set; }      // 1..1 (State)
+        private readonly List<CambioDeEstado> _historial = new();     // 1..*
+        public List<CambioDeEstado> CambioEstado => _historial;       // nombre pedido
 
-        // Valor persistente en BD (sí se mapea)
-        public string EstadoActualNombre { get; set; } = "Autodetectado"; // <— default seguro
+        public List<SerieTemporal> SeriesTemporales { get; set; } = new();
 
-        // =============== Relaciones de catálogo/usuario ===============
-        public Guid AlcanceId { get; set; }
-        public Guid ClasificacionId { get; set; }
-        public Guid OrigenId { get; set; }
-        public Guid ResponsableId { get; set; }
+        // ====== Shims de compatibilidad para NO tocar el CU ======
+        // El CU usa Guid Id; lo mantenemos como identificador lógico del dominio.
+        public Guid Id { get; set; } = Guid.NewGuid();
 
-        public AlcanceSismo Alcance { get; set; }
-        public ClasificacionSismo Clasificacion { get; set; }
-        public OrigenDeGeneracion Origen { get; set; }
-        public Empleado Responsable { get; set; }
+        // El CU llama a FechaHoraInicio → es la ocurrencia en tu dominio
+        public DateTime FechaHoraInicio
+        {
+            get => FechaHoraOcurrencia;
+            set => FechaHoraOcurrencia = value;
+        }
 
-        // =============== Series y cambios de estado ===============
-        public List<SerieTemporal> SeriesTemporales { get; private set; } = new();
-        public List<CambioDeEstado> CambiosDeEstado { get; } = new();
+        // El CU usa EstadoActual/EstadoActualNombre
+        public Estado EstadoActual
+        {
+            get => Estado;
+            private set => Estado = value;
+        }
+        public string EstadoActualNombre { get; set; } = "Autodetectado";
 
-        // =============== Consultas simples ===============
+        // El CU usa .CambiosDeEstado
+        public List<CambioDeEstado> CambiosDeEstado => _historial;
+
+        // El CU usa .Origen (no OrigenDeGeneracion)
+        public OrigenDeGeneracion Origen
+        {
+            get => OrigenDeGeneracion;
+            set => OrigenDeGeneracion = value;
+        }
+
+        // ===== Consultas simples (no se cambian) =====
         public string GetFechaHora() => FechaHoraInicio.ToString("g");
         public double GetLatitudEpicentro() => LatitudEpicentro;
         public double GetLongitudEpicentro() => LongitudEpicentro;
@@ -51,7 +65,6 @@ namespace PPAI_Revisiones.Modelos
         public double GetLongitudHipocentro() => LongitudHipocentro;
         public double GetMagnitud() => ValorMagnitud;
 
-        // Funciona aunque EstadoActual aún no esté reconstruido en memoria
         public bool sosAutodetectado() =>
             (EstadoActual?.EsAutodetectado == true) || EstadoActualNombre == "Autodetectado";
 
@@ -64,22 +77,15 @@ namespace PPAI_Revisiones.Modelos
             $"Latitud Hipocentro: {LatitudHipocentro}, Longitud Hipocentro: {LongitudHipocentro}, " +
             $"Magnitud: {ValorMagnitud}";
 
-        // =============== Infra de cambios de estado ===============
-        public void AgregarCambioEstado(CambioDeEstado ce)
-{
-    CambiosDeEstado.Add(ce);
-
-    // 🔴 Si el contexto está disponible, EF lo detectará automáticamente al agregarlo.
-    // Si no, se persistirá explícitamente en el manejador (ver siguiente paso).
-}
+        // ===== Infra de cambios de estado (firmas intactas) =====
+        public void AgregarCambioEstado(CambioDeEstado ce) => CambiosDeEstado.Add(ce);
 
         public void SetEstado(Estado estado)
         {
             EstadoActual = estado;
-            EstadoActualNombre = estado?.Nombre; // <- CLAVE: persistimos el nombre
+            EstadoActualNombre = estado?.Nombre;
         }
 
-        // --- NUEVO: reconstruir Estado desde el nombre persistido (para leer de BD) ---
         public void MaterializarEstadoDesdeNombre()
             => EstadoActual = Estado.FromName(EstadoActualNombre);
 
@@ -90,46 +96,38 @@ namespace PPAI_Revisiones.Modelos
                 c.EstadoActual = Estado.FromName(c.EstadoNombre);
         }
 
-        // =============== Detalle del evento y series ===============
+        // ===== Detalle / series (igual que tenías) =====
         public string GetDetalleEventoSismico()
         {
             var sb = new StringBuilder();
             sb.AppendLine("===== DETALLE DEL EVENTO SÍSMICO =====");
-            sb.AppendLine($"Fecha de inicio: {FechaHoraInicio:dd/MM/yyyy HH:mm}");
-            sb.AppendLine($"Epicentro: Lat {LatitudEpicentro} / Lon {LongitudEpicentro}");
-            sb.AppendLine($"Hipocentro: Lat {LatitudHipocentro} / Lon {LongitudHipocentro}");
-            sb.AppendLine($"Magnitud: {ValorMagnitud}");
-            sb.AppendLine($"Alcance: {Alcance?.GetNombreAlcance() ?? "(sin datos)"}");
-            sb.AppendLine($"Clasificación: {Clasificacion?.GetNombreClasificacion() ?? "(sin datos)"}");
-            sb.AppendLine($"Origen: {Origen?.GetNombreOrigen() ?? "(sin datos)"}");
-
-            // === Mantiene tu cadena de llamadas ===
-            sb.AppendLine(ObtenerDatosSeriesTemporales());
-
-            Debug.WriteLine($"[Evento] {Id} detalle armado (len={sb.Length})");
+            sb.AppendLine($"Fecha de inicio : {FechaHoraInicio:dd/MM/yyyy HH:mm}");
+            sb.AppendLine($"Epicentro       : Lat {LatitudEpicentro:0.####} / Lon {LongitudEpicentro:0.####}");
+            sb.AppendLine($"Hipocentro      : Lat {LatitudHipocentro:0.####} / Lon {LongitudHipocentro:0.####}");
+            sb.AppendLine($"Magnitud        : {ValorMagnitud:0.0}");
+            sb.AppendLine($"Alcance         : {Alcance?.GetNombreAlcance() ?? "—"}");
+            sb.AppendLine($"Clasificación   : {Clasificacion?.GetNombreClasificacion() ?? "—"}");
+            sb.AppendLine($"Origen          : {Origen?.GetNombreOrigen() ?? "—"}");
+            sb.AppendLine();
+            sb.Append(ObtenerDatosSeriesTemporales());
             return sb.ToString();
         }
 
         public string ObtenerDatosSeriesTemporales()
         {
             var sb = new StringBuilder();
+            var series = (SeriesTemporales ?? new List<SerieTemporal>())
+                         .OrderBy(s => s.Sismografo?.GetNombreEstacion())
+                         .ToList();
 
-            var series = SeriesTemporales ?? new List<SerieTemporal>();
-            Debug.WriteLine($"[Evento] {Id} series asociadas: {series.Count}");
-
-            sb.AppendLine($"[TRACE] Series asociadas al evento: {series.Count}");
-
-
-            // 1) LOOP principal: Evento -> SerieTemporal.GetSeries()
-            foreach (var serie in series)
+            if (series.Count == 0)
             {
-                sb.Append(serie.GetSeries());
+                sb.AppendLine("No hay series temporales asociadas.");
+                return sb.ToString();
             }
 
-            // 2) Al finalizar el bucle, ordenar por estación (como pediste)
-            AgruparInformacionSeriesPorEstacion();
-            sb.AppendLine("[TRACE] Series ordenadas por nombre de estación.");
-
+            foreach (var serie in series)
+                sb.Append(serie.GetSeries());
 
             return sb.ToString();
         }
@@ -139,8 +137,7 @@ namespace PPAI_Revisiones.Modelos
                 .OrderBy(s => s.Sismografo?.GetNombreEstacion()?.ToLowerInvariant())
                 .ToList();
 
-
-        // =============== Delegación a los ESTADOS (State) ===============
+        // ===== Delegación a ESTADOS (firmas intactas) =====
         public void RegistrarEstadoBloqueado(DateTime fechaHoraActual, Empleado responsable)
             => (EstadoActual as Autodetectado)
                ?.registrarEstadoBloqueado(this, CambiosDeEstado, fechaHoraActual, responsable);
@@ -149,6 +146,4 @@ namespace PPAI_Revisiones.Modelos
             => (EstadoActual as Bloqueado)
                ?.rechazar(CambiosDeEstado, this, fechaHoraActual, responsable);
     }
-
-
 }

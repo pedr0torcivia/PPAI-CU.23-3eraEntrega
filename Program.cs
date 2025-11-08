@@ -1,4 +1,4 @@
-﻿﻿// Program.cs
+﻿// Program.cs
 using Microsoft.EntityFrameworkCore;
 using PPAI_2.Infra.Data;
 using System;
@@ -40,8 +40,10 @@ namespace PPAI_Revisiones
             {
                 using (var ctx = new RedSismicaContext())
                 {
-                    // Conservás/volás datos a gusto
+#if DEBUG
+                    // En desarrollo: resetea DB
                     ctx.Database.EnsureDeleted();
+#endif
                     ctx.Database.EnsureCreated();
 
                     var importFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "import");

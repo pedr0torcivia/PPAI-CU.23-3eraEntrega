@@ -11,5 +11,6 @@ namespace PPAI_2.Infra.Repos
         EventoSismico GetEventoParaReversionDeBloqueo(Guid eventoId);
         EventoSismico GetEventoConSeriesYDetalles(Guid eventoId);
         void Guardar();
+        void Guardar(EventoSismico dom, Guid? responsableIdEf);
     }
 }

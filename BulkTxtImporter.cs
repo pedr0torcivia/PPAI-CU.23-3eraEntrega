@@ -1,503 +1,692 @@
-﻿// BulkTxtImporter.cs
+﻿// Infra/Data/BulkTxtImporter.cs
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using EFCore.BulkExtensions; // solo catálogos SIN FKs
+using EFCore.BulkExtensions; // para catálogos sin FK
 using Microsoft.EntityFrameworkCore;
 using PPAI_2.Infra.Data;
-using PPAI_Revisiones.Modelos;
-using PPAI_Revisiones.Modelos.Estados;
+using PPAI_2.Infra.Data.EFModels;
 
 internal static class BulkTxtImporter
 {
+    // ======= CONFIG =======
+    private static readonly string[] DateFormats = new[]
+    {
+        "yyyy-MM-dd HH:mm:ss", "yyyy/MM/dd HH:mm:ss",
+        "yyyy-MM-ddTHH:mm:ss", "yyyy/MM/ddTHH:mm:ss"
+    };
+    private static readonly CultureInfo CI = CultureInfo.InvariantCulture;
+
+    // ======= ENTRYPOINT =======
     public static void Run(RedSismicaContext ctx, string folder)
     {
-        if (!Directory.Exists(folder))
-            Directory.CreateDirectory(folder);
+        Directory.CreateDirectory(folder);
 
         using var tx = ctx.Database.BeginTransaction();
-
-        ImportOrigenes(ctx, Path.Combine(folder, "Origenes.txt"));
-        ImportAlcances(ctx, Path.Combine(folder, "Alcances.txt"));
-        ImportClasificaciones(ctx, Path.Combine(folder, "Clasificaciones.txt"));
-        ImportTiposDeDato(ctx, Path.Combine(folder, "TiposDeDato.txt"));
-        ImportUsuariosYEmpleados(ctx, Path.Combine(folder, "Usuarios.txt"), Path.Combine(folder, "Empleados.txt"));
-
-        // Detectar nombre real del archivo de eventos
-        var eventosFile = File.Exists(Path.Combine(folder, "EventosSismicos.txt"))
-            ? Path.Combine(folder, "EventosSismicos.txt")
-            : Path.Combine(folder, "Eventos.txt"); // ← vos subiste "Eventos.txt"
-        ImportEventosSismicos(ctx, eventosFile);
-
-        ImportSismografosYEstaciones(ctx, Path.Combine(folder, "Estaciones.txt"), Path.Combine(folder, "Sismografos.txt"));
-        ImportSeriesMuestrasDetalles(ctx,
-            Path.Combine(folder, "SeriesTemporales.txt"),
-            Path.Combine(folder, "Muestras.txt"),
-            Path.Combine(folder, "DetalleMuestra.txt"));
-
-        ctx.SaveChanges();
-        tx.Commit();
-    }
-
-    // ===== Catálogos (Bulk OK) =====
-    private static void ImportOrigenes(RedSismicaContext ctx, string path)
-    {
-        if (!File.Exists(path)) return;
-        var rows = ReadCsv(path);
-        var nuevos = new List<OrigenDeGeneracion>();
-        foreach (var r in rows)
+        try
         {
-            var id = GetGuid(r, "Id") ?? Guid.NewGuid();
-            var nombre = Get(r, "Nombre");
-            if (string.IsNullOrWhiteSpace(nombre)) continue;
-            if (!ctx.Origenes.Any(x => x.Id == id || x.Nombre == nombre))
-                nuevos.Add(new OrigenDeGeneracion { Id = id, Nombre = nombre, Descripcion = Get(r, "Descripcion") });
+            // 1) Catálogos y básicos (sin FK o con FK simple)
+            ImportAlcances(ctx, Path.Combine(folder, "Alcances.txt"));
+            ImportClasificaciones(ctx, Path.Combine(folder, "Clasificaciones.txt"));
+            ImportOrigenes(ctx, Path.Combine(folder, "Origenes.txt"));
+            ImportTiposDeDato(ctx, Path.Combine(folder, "TiposDeDato.txt"));
+
+            ImportEstaciones(ctx, Path.Combine(folder, "Estaciones.txt"));
+            ImportSismografos(ctx, Path.Combine(folder, "Sismografos.txt"));
+
+            ImportUsuarios(ctx, Path.Combine(folder, "Usuarios.txt"));
+            ImportEmpleados(ctx, Path.Combine(folder, "Empleados.txt"));
+
+            // 2) Agregados dependientes
+            ImportEventos(ctx, Path.Combine(folder, "EventosSismicos.txt"));
+            ImportCambiosDeEstado(ctx, Path.Combine(folder, "CambiosDeEstado.txt"));
+
+            // 3) Series / Muestras / Detalles
+            ImportSeriesTemporales(ctx, Path.Combine(folder, "SeriesTemporales.txt"));
+            ImportMuestras(ctx, Path.Combine(folder, "Muestras.txt"));
+            ImportDetallesMuestra(ctx, Path.Combine(folder, "DetallesMuestra.txt"));
+
+            tx.Commit();
         }
-        if (nuevos.Count > 0) ctx.BulkInsert(nuevos);
-    }
-
-    private static void ImportAlcances(RedSismicaContext ctx, string path)
-    {
-        if (!File.Exists(path)) return;
-        var rows = ReadCsv(path);
-        var nuevos = new List<AlcanceSismo>();
-        foreach (var r in rows)
+        catch (Exception ex)
         {
-            var id = GetGuid(r, "Id") ?? Guid.NewGuid();
-            var nombre = Get(r, "Nombre");
-            if (string.IsNullOrWhiteSpace(nombre)) continue;
-            if (!ctx.Alcances.Any(x => x.Id == id || x.Nombre == nombre))
-                nuevos.Add(new AlcanceSismo { Id = id, Nombre = nombre, Descripcion = Get(r, "Descripcion") });
-        }
-        if (nuevos.Count > 0) ctx.BulkInsert(nuevos);
-    }
-
-    private static void ImportClasificaciones(RedSismicaContext ctx, string path)
-    {
-        if (!File.Exists(path)) return;
-        var rows = ReadCsv(path);
-        var nuevos = new List<ClasificacionSismo>();
-        foreach (var r in rows)
-        {
-            var id = GetGuid(r, "Id") ?? Guid.NewGuid();
-            var nombre = Get(r, "Nombre");
-            if (string.IsNullOrWhiteSpace(nombre)) continue;
-            if (!ctx.Clasificaciones.Any(x => x.Id == id || x.Nombre == nombre))
-                nuevos.Add(new ClasificacionSismo
-                {
-                    Id = id,
-                    Nombre = nombre,
-                    KmProfundidadDesde = GetDouble(r, "KmProfundidadDesde") ?? 0,
-                    KmProfundidadHasta = GetDouble(r, "KmProfundidadHasta") ?? 0
-                });
-        }
-        if (nuevos.Count > 0) ctx.BulkInsert(nuevos);
-    }
-
-    private static void ImportTiposDeDato(RedSismicaContext ctx, string path)
-    {
-        if (!File.Exists(path)) return;
-        var rows = ReadCsv(path);
-        var nuevos = new List<TipoDeDato>();
-        foreach (var r in rows)
-        {
-            var id = GetGuid(r, "Id") ?? Guid.NewGuid();
-            var denom = Get(r, "Denominacion");
-            if (string.IsNullOrWhiteSpace(denom)) continue;
-            if (!ctx.TiposDeDato.Any(x => x.Id == id || x.Denominacion == denom))
-                nuevos.Add(new TipoDeDato
-                {
-                    Id = id,
-                    Denominacion = denom,
-                    NombreUnidadMedida = Get(r, "NombreUnidadMedida"),
-                    ValorUmbral = GetDouble(r, "ValorUmbral") ?? 0
-                });
-        }
-        if (nuevos.Count > 0) ctx.BulkInsert(nuevos);
-    }
-
-    private static void ImportUsuariosYEmpleados(RedSismicaContext ctx, string usuariosPath, string empleadosPath)
-    {
-        if (File.Exists(usuariosPath))
-        {
-            var rows = ReadCsv(usuariosPath);
-            var nuevosU = new List<Usuario>();
-            foreach (var r in rows)
-            {
-                var id = GetGuid(r, "Id") ?? Guid.NewGuid();
-                var nombreUsuario = Get(r, "NombreUsuario");
-                if (string.IsNullOrWhiteSpace(nombreUsuario)) continue;
-                if (!ctx.Usuarios.Any(x => x.Id == id || x.NombreUsuario == nombreUsuario))
-                    nuevosU.Add(new Usuario { Id = id, NombreUsuario = nombreUsuario, Contraseña = Get(r, "Contraseña") ?? "operador" });
-            }
-            if (nuevosU.Count > 0) { ctx.AddRange(nuevosU); ctx.SaveChanges(); }
-        }
-
-        if (File.Exists(empleadosPath))
-        {
-            var rows = ReadCsv(empleadosPath);
-            var nuevosE = new List<Empleado>();
-            foreach (var r in rows)
-            {
-                var id = GetGuid(r, "Id") ?? Guid.NewGuid();
-                var mail = Get(r, "Mail");
-                if (string.IsNullOrWhiteSpace(mail)) continue;
-                if (ctx.Empleados.Any(x => x.Id == id || x.Mail == mail)) continue;
-
-                var e = new Empleado
-                {
-                    Id = id,
-                    Nombre = Get(r, "Nombre") ?? "",
-                    Apellido = Get(r, "Apellido") ?? "",
-                    Mail = mail,
-                    Telefono = Get(r, "Telefono"),
-                };
-
-                var uName = Get(r, "UsuarioNombreUsuario");
-                if (!string.IsNullOrWhiteSpace(uName))
-                {
-                    var u = ctx.Usuarios.FirstOrDefault(x => x.NombreUsuario == uName);
-                    if (u != null) e.UsuarioId = u.Id;
-                }
-
-                nuevosE.Add(e);
-            }
-            if (nuevosE.Count > 0) { ctx.AddRange(nuevosE); ctx.SaveChanges(); }
-        }
-
-        if (!ctx.Empleados.Any())
-        {
-            var u = new Usuario { Id = Guid.NewGuid(), NombreUsuario = "operador", Contraseña = "operador" };
-            var e = new Empleado { Id = Guid.NewGuid(), Nombre = "Operador", Apellido = "Base", Mail = "operador@redsismica.local", Telefono = "000-000", UsuarioId = u.Id };
-            ctx.AddRange(u, e);
-            ctx.SaveChanges();
+            try { tx.Rollback(); } catch { /* ignore */ }
+            System.Windows.Forms.MessageBox.Show("Error en importación masiva:\n\n" + ex);
+            throw;
         }
     }
 
-    // ===== Eventos (guardar con FKs explícitas) =====
-    private static void ImportEventosSismicos(RedSismicaContext ctx, string path)
+    // ================== IMPORTS (CATÁLOGOS) ==================
+    private static void ImportAlcances(RedSismicaContext ctx, string file)
     {
-        if (!File.Exists(path)) return;
+        if (!File.Exists(file)) return;
+        var rows = ReadRows(file, 3);
+        var nuevos = new List<AlcanceSismoEF>();
 
-        var rows = ReadCsv(path);
-        var insertados = 0; var saltados = 0;
+        var existentes = ctx.Set<AlcanceSismoEF>().AsNoTracking()
+            .ToDictionary(x => x.Id, _ => true);
 
         foreach (var r in rows)
         {
-            var id = GetGuid(r, "Id") ?? Guid.NewGuid();
-            if (ctx.EventosSismicos.Any(x => x.Id == id)) { saltados++; continue; }
+            var id = ParseGuid(r[0]); if (id == Guid.Empty) continue;
+            if (existentes.ContainsKey(id)) continue;
 
-            // Admitir por NOMBRE (como en tus TXT): crea si no existe
-            var alcance = GetOrCreateAlcance(ctx, Get(r, "AlcanceNombre") ?? "Local");
-            var clasif = GetOrCreateClasificacion(ctx, Get(r, "ClasificacionNombre") ?? "Preliminar");
-            var origen = GetOrCreateOrigen(ctx, Get(r, "OrigenNombre") ?? "Autodetectado");
-            var resp = GetOrCreateEmpleadoPorMail(ctx, Get(r, "ResponsableMail") ?? "operador@redsismica.local");
-
-            var ev = new EventoSismico
+            nuevos.Add(new AlcanceSismoEF
             {
                 Id = id,
-                FechaHoraInicio = GetDate(r, "FechaHoraInicio") ?? DateTime.Now,
-                FechaHoraDeteccion = GetDate(r, "FechaHoraDeteccion") ?? DateTime.Now,
-                LatitudEpicentro = GetDouble(r, "LatitudEpicentro") ?? 0,
-                LongitudEpicentro = GetDouble(r, "LongitudEpicentro") ?? 0,
-                LatitudHipocentro = GetDouble(r, "LatitudHipocentro") ?? 0,
-                LongitudHipocentro = GetDouble(r, "LongitudHipocentro") ?? 0,
-                ValorMagnitud = GetDouble(r, "ValorMagnitud") ?? 0,
-                EstadoActualNombre = Get(r, "EstadoActualNombre") ?? "Autodetectado",
-                AlcanceId = alcance.Id,
-                ClasificacionId = clasif.Id,
-                OrigenId = origen.Id,
-                ResponsableId = resp.Id
-            };
-
-            ev.MaterializarEstadoDesdeNombre();
-
-            ctx.Add(ev);
-            insertados++;
-        }
-
-        if (insertados > 0) ctx.SaveChanges();
-
-        // Cambios abiertos “Autodetectado” (solo si aplica y aún no existe CE)
-        var nuevosCE = new List<CambioDeEstado>();
-        foreach (var ev in ctx.EventosSismicos.AsNoTracking().Where(x => x.EstadoActualNombre == "Autodetectado"))
-        {
-            bool yaTieneCE = ctx.CambiosDeEstado.Any(c => c.EventoSismicoId == ev.Id && c.EstadoNombre == "Autodetectado");
-            if (yaTieneCE) continue;
-
-            nuevosCE.Add(new CambioDeEstado
-            {
-                Id = Guid.NewGuid(),
-                EventoSismicoId = ev.Id,
-                EstadoNombre = "Autodetectado",
-                EstadoActual = new Autodetectado(),
-                FechaHoraInicio = ev.FechaHoraDeteccion,
-                FechaHoraFin = null,
-                ResponsableId = ev.ResponsableId
+                Nombre = Nz(r[1]),
+                Descripcion = Nz(r[2])
             });
         }
-        if (nuevosCE.Count > 0) { ctx.AddRange(nuevosCE); ctx.SaveChanges(); }
+        BulkInsertIfAny(ctx, nuevos);
     }
 
-    // ===== Estaciones / Sismógrafos / Series / Muestras / Detalles =====
-    private static void ImportSismografosYEstaciones(RedSismicaContext ctx, string estacionesPath, string sismografosPath)
+    private static void ImportClasificaciones(RedSismicaContext ctx, string file)
     {
-        if (File.Exists(estacionesPath))
+        if (!File.Exists(file)) return;
+        var rows = ReadRows(file, 4);
+        var nuevos = new List<ClasificacionSismoEF>();
+        var existentes = ctx.Set<ClasificacionSismoEF>().AsNoTracking()
+            .ToDictionary(x => x.Id, _ => true);
+
+        foreach (var r in rows)
         {
-            var rows = ReadCsv(estacionesPath);
-            var nuevos = new List<EstacionSismologica>();
-            foreach (var r in rows)
-            {
-                var e = new EstacionSismologica
-                {
-                    Id = GetGuid(r, "Id") ?? Guid.NewGuid(),
-                    Id_Estacion = GetInt(r, "Id_Estacion") ?? 0,
-                    CodigoEstacion = Get(r, "CodigoEstacion"),
-                    DocumentoCertificacionAdq = Get(r, "DocumentoCertificacionAdq"),
-                    FechaSolicitudCertificacion = GetDate(r, "FechaSolicitudCertificacion") ?? DateTime.Now,
-                    Latitud = GetDouble(r, "Latitud") ?? 0,
-                    Longitud = GetDouble(r, "Longitud") ?? 0,
-                    Nombre = Get(r, "Nombre"),
-                    NroCertificacionAdquisicion = Get(r, "NroCertificacionAdquisicion")
-                };
-                if (!ctx.Estaciones.Any(x => x.Id == e.Id))
-                    nuevos.Add(e);
-            }
-            if (nuevos.Count > 0) { ctx.AddRange(nuevos); ctx.SaveChanges(); }
-        }
+            var id = ParseGuid(r[0]); if (id == Guid.Empty) continue;
+            if (existentes.ContainsKey(id)) continue;
 
-        if (File.Exists(sismografosPath))
+            nuevos.Add(new ClasificacionSismoEF
+            {
+                Id = id,
+                Nombre = Nz(r[1]),
+                KmProfundidadDesde = ParseDouble(r[2]),
+                KmProfundidadHasta = ParseDouble(r[3]),
+            });
+        }
+        BulkInsertIfAny(ctx, nuevos);
+    }
+
+    private static void ImportOrigenes(RedSismicaContext ctx, string file)
+    {
+        if (!File.Exists(file)) return;
+        var rows = ReadRows(file, 3);
+        var nuevos = new List<OrigenDeGeneracionEF>();
+        var existentes = ctx.Set<OrigenDeGeneracionEF>().AsNoTracking()
+            .ToDictionary(x => x.Id, _ => true);
+
+        foreach (var r in rows)
         {
-            var rows = ReadCsv(sismografosPath);
-            var nuevos = new List<Sismografo>();
-            foreach (var r in rows)
-            {
-                var s = new Sismografo
-                {
-                    Id = GetGuid(r, "Id") ?? Guid.NewGuid(),
-                    IdentificadorSismografo = Get(r, "IdentificadorSismografo"),
-                    NroSerie = Get(r, "NroSerie"),
-                    FechaAdquisicion = GetDate(r, "FechaAdquisicion") ?? DateTime.Now
-                };
-                var estId = GetGuid(r, "EstacionId"); // nullable en schema → OK
-                if (estId.HasValue) s.EstacionId = estId.Value;
+            var id = ParseGuid(r[0]); if (id == Guid.Empty) continue;
+            if (existentes.ContainsKey(id)) continue;
 
-                if (!ctx.Sismografos.Any(x => x.Id == s.Id))
-                    nuevos.Add(s);
-            }
-            if (nuevos.Count > 0) { ctx.AddRange(nuevos); ctx.SaveChanges(); }
+            nuevos.Add(new OrigenDeGeneracionEF
+            {
+                Id = id,
+                Nombre = Nz(r[1]),
+                Descripcion = Nz(r[2]),
+            });
         }
+        BulkInsertIfAny(ctx, nuevos);
     }
 
-    private static void ImportSeriesMuestrasDetalles(RedSismicaContext ctx, string seriesPath, string muestrasPath, string detallesPath)
+    private static void ImportTiposDeDato(RedSismicaContext ctx, string file)
     {
-        // SERIES (FK-safe)
-        if (File.Exists(seriesPath))
+        if (!File.Exists(file)) return;
+        var rows = ReadRows(file, 4);
+        var nuevos = new List<TipoDeDatoEF>();
+        var existentes = ctx.Set<TipoDeDatoEF>().AsNoTracking()
+            .ToDictionary(x => x.Id, _ => true);
+
+        foreach (var r in rows)
         {
-            var rows = ReadCsv(seriesPath);
-            int ins = 0, fkSkip = 0;
-            foreach (var r in rows)
+            var id = ParseGuid(r[0]); if (id == Guid.Empty) continue;
+            if (existentes.ContainsKey(id)) continue;
+
+            nuevos.Add(new TipoDeDatoEF
             {
-                var id = GetGuid(r, "Id") ?? Guid.NewGuid();
-                if (ctx.SeriesTemporales.Any(x => x.Id == id)) continue;
-
-                var evId = GetGuid(r, "EventoSismicoId");
-                var sisId = GetGuid(r, "SismografoId");
-                if (evId == null || sisId == null || ctx.EventosSismicos.Find(evId) == null || ctx.Sismografos.Find(sisId) == null)
-                { fkSkip++; continue; }
-
-                var st = new SerieTemporal
-                {
-                    Id = id,
-                    CondicionAlarma = (Get(r, "CondicionAlarma") ?? "0").Trim() is "1" or "true" or "TRUE",
-                    FechaHoraInicioRegistroMuestras = GetDate(r, "FechaHoraInicioRegistroMuestras") ?? DateTime.Now,
-                    FechaHoraRegistro = GetDate(r, "FechaHoraRegistro") ?? DateTime.Now,
-                    FrecuenciaMuestreo = GetDouble(r, "FrecuenciaMuestreo") ?? 0,
-                    SismografoId = sisId,
-                    EventoSismicoId = evId
-                };
-                ctx.Add(st); ins++;
-            }
-            if (ins > 0) ctx.SaveChanges();
-            if (fkSkip > 0) Console.WriteLine($"[SEED] SeriesTemporales: saltadas por FK={fkSkip}");
+                Id = id,
+                Denominacion = Nz(r[1]),
+                NombreUnidadMedida = Nz(r[2]),
+                ValorUmbral = ParseDouble(r[3]) // si no hay valor, 0
+            });
         }
+        BulkInsertIfAny(ctx, nuevos);
+    }
 
-        // MUESTRAS (FK-safe)
-        if (File.Exists(muestrasPath))
+    private static void ImportEstaciones(RedSismicaContext ctx, string file)
+    {
+        if (!File.Exists(file)) return;
+        // Formato mínimo esperado: Id;CodigoEstacion;Nombre;Latitud;Longitud
+        var rows = ReadRows(file, 5);
+        var nuevos = new List<EstacionSismologicaEF>();
+        var existentes = ctx.Set<EstacionSismologicaEF>().AsNoTracking()
+            .ToDictionary(x => x.Id, _ => true);
+
+        foreach (var r in rows)
         {
-            var rows = ReadCsv(muestrasPath);
-            int ins = 0, fkSkip = 0;
-            foreach (var r in rows)
+            var id = ParseGuid(r[0]); if (id == Guid.Empty) continue;
+            if (existentes.ContainsKey(id)) continue;
+
+            var est = new EstacionSismologicaEF
             {
-                var id = GetGuid(r, "Id") ?? Guid.NewGuid();
-                if (ctx.Muestras.Any(x => x.Id == id)) continue;
+                Id = id,
+                CodigoEstacion = Safe(r, 1),
+                Nombre = Safe(r, 2),
+                Latitud = ParseDouble(Safe(r, 3)),
+                Longitud = ParseDouble(Safe(r, 4)),
+            };
+            // opcionales del DER si vinieran
+            est.DocumentoCertificacionAdq = Safe(r, 5);
+            est.NroCertificacionAdquisicion = Safe(r, 6);
+            est.FechaSolicitudCertificacion = ParseDate(Safe(r, 7)) ?? DateTime.MinValue;
 
-                var serieId = GetGuid(r, "SerieTemporalId");
-                if (serieId == null || ctx.SeriesTemporales.Find(serieId) == null)
-                { fkSkip++; continue; }
-
-                var m = new MuestraSismica
-                {
-                    Id = id,
-                    FechaHoraMuestra = GetDate(r, "FechaHoraMuestra") ?? DateTime.Now,
-                    SerieTemporalId = serieId.Value
-                };
-                ctx.Add(m); ins++;
-            }
-            if (ins > 0) ctx.SaveChanges();
-            if (fkSkip > 0) Console.WriteLine($"[SEED] Muestras: saltadas por FK={fkSkip}");
+            nuevos.Add(est);
         }
-
-        // DETALLES (FK-safe con mapeo por Denominación o por Id) — SIN GroupBy en EF
-        if (File.Exists(detallesPath))
-        {
-            // Asegura que Series/Muestras/Tipos estén persistidos
-            ctx.SaveChanges();
-            ctx.ChangeTracker.Clear();
-
-            // Cache: Muestras por Id
-            var muestrasOK = ctx.Muestras.AsNoTracking()
-                                 .Select(m => m.Id)
-                                 .ToHashSet();
-
-            // Cache Tipos de Dato en memoria
-            var tiposList = ctx.TiposDeDato.AsNoTracking().ToList();
-            var tiposPorId = tiposList.ToDictionary(t => t.Id, t => t);
-            var tiposPorDenom = new Dictionary<string, TipoDeDato>(StringComparer.OrdinalIgnoreCase);
-            foreach (var t in tiposList)
-            {
-                var key = (t.Denominacion ?? string.Empty).Trim();
-                if (!tiposPorDenom.ContainsKey(key))
-                    tiposPorDenom[key] = t;
-            }
-
-            var rows = ReadCsv(detallesPath);
-            int ins = 0, fkSkip = 0;
-
-            foreach (var r in rows)
-            {
-                var id = GetGuid(r, "Id") ?? Guid.NewGuid();
-                if (ctx.DetallesMuestra.AsNoTracking().Any(x => x.Id == id))
-                    continue;
-
-                var muestraId = GetGuid(r, "MuestraSismicaId");
-                if (muestraId == null || !muestrasOK.Contains(muestraId.Value))
-                {
-                    fkSkip++;
-                    Console.WriteLine($"[SEED] Detalle {id}: muestra inexistente -> skip");
-                    continue;
-                }
-
-                // Resolver TipoDeDato
-                Guid? tipoId = GetGuid(r, "TipoDeDatoId");
-                if (tipoId.HasValue && !tiposPorId.ContainsKey(tipoId.Value))
-                    tipoId = null;
-
-                if (!tipoId.HasValue)
-                {
-                    var denomKey = (Get(r, "TipoDeDatoDenominacion") ?? Get(r, "TipoDeDato") ?? string.Empty).Trim();
-                    if (!string.IsNullOrWhiteSpace(denomKey) && tiposPorDenom.TryGetValue(denomKey, out var tipo))
-                        tipoId = tipo.Id;
-                }
-
-                if (!tipoId.HasValue)
-                {
-                    fkSkip++;
-                    Console.WriteLine($"[SEED] Detalle {id}: TipoDeDato no resuelto (ni Id ni Denominación) -> skip");
-                    continue;
-                }
-
-                var d = new DetalleMuestra
-                {
-                    Id = id,
-                    MuestraSismicaId = muestraId.Value,
-                    TipoDeDatoId = tipoId.Value,
-                    Valor = GetDouble(r, "Valor") ?? 0
-                };
-
-                ctx.DetallesMuestra.Add(d);
-                ins++;
-            }
-
-            if (ins > 0) ctx.SaveChanges();
-            Console.WriteLine($"[SEED] DetallesMuestra insertadas={ins}, saltadas por FK={fkSkip}");
-        }
-    }
-
-    // ===== Helpers dominio (crear si no existe) =====
-    private static AlcanceSismo GetOrCreateAlcance(RedSismicaContext ctx, string nombre)
-    {
-        var x = ctx.Alcances.FirstOrDefault(a => a.Nombre == nombre);
-        if (x != null) return x;
-        x = new AlcanceSismo { Id = Guid.NewGuid(), Nombre = nombre, Descripcion = "" };
-        ctx.Add(x); ctx.SaveChanges();
-        return x;
-    }
-
-    private static ClasificacionSismo GetOrCreateClasificacion(RedSismicaContext ctx, string nombre)
-    {
-        var x = ctx.Clasificaciones.FirstOrDefault(a => a.Nombre == nombre);
-        if (x != null) return x;
-        x = new ClasificacionSismo { Id = Guid.NewGuid(), Nombre = nombre, KmProfundidadDesde = 0, KmProfundidadHasta = 0 };
-        ctx.Add(x); ctx.SaveChanges();
-        return x;
-    }
-
-    private static OrigenDeGeneracion GetOrCreateOrigen(RedSismicaContext ctx, string nombre)
-    {
-        var x = ctx.Origenes.FirstOrDefault(a => a.Nombre == nombre);
-        if (x != null) return x;
-        x = new OrigenDeGeneracion { Id = Guid.NewGuid(), Nombre = nombre, Descripcion = "" };
-        ctx.Add(x); ctx.SaveChanges();
-        return x;
-    }
-
-    private static Empleado GetOrCreateEmpleadoPorMail(RedSismicaContext ctx, string mail)
-    {
-        var e = ctx.Empleados.FirstOrDefault(a => a.Mail == mail);
-        if (e != null) return e;
-
-        var u = new Usuario { Id = Guid.NewGuid(), NombreUsuario = mail.Split('@')[0], Contraseña = "operador" };
-        var nuevo = new Empleado { Id = Guid.NewGuid(), Nombre = "Operador", Apellido = "Import", Mail = mail, Telefono = "000-000", UsuarioId = u.Id };
-
-        ctx.AddRange(u, nuevo);
+        ctx.Set<EstacionSismologicaEF>().AddRange(nuevos);
         ctx.SaveChanges();
-        return nuevo;
     }
 
-    // ===== Utilidades CSV =====
-    private static List<Dictionary<string, string>> ReadCsv(string path)
+    private static void ImportSismografos(RedSismicaContext ctx, string file)
     {
-        if (!File.Exists(path)) return new();
-        var lines = File.ReadAllLines(path);
-        if (lines.Length == 0) return new();
-        var headers = lines[0].Split(';').Select(h => h.Trim()).ToArray();
-        var rows = new List<Dictionary<string, string>>();
-        for (int i = 1; i < lines.Length; i++)
+        if (!File.Exists(file)) return;
+        // Esperado: Id;IdentificadorSismografo;NroSerie;FechaAdquisicion;CodigoEstacion
+        var rows = ReadRows(file, 5);
+        var nuevos = new List<SismografoEF>();
+
+        // Resolución por CodigoEstacion
+        var codigo2EstacionId = ctx.Set<EstacionSismologicaEF>().AsNoTracking()
+            .Where(e => e.CodigoEstacion != null)
+            .ToDictionary(e => e.CodigoEstacion!, e => (Guid?)e.Id);
+
+        var existentes = ctx.Set<SismografoEF>().AsNoTracking()
+            .ToDictionary(x => x.Id, _ => true);
+
+        foreach (var r in rows)
         {
-            if (string.IsNullOrWhiteSpace(lines[i])) continue;
-            var cols = lines[i].Split(';');
-            var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            for (int c = 0; c < headers.Length && c < cols.Length; c++) dict[headers[c]] = (cols[c] ?? "").Trim();
-            rows.Add(dict);
+            var id = ParseGuid(r[0]); if (id == Guid.Empty) continue;
+            if (existentes.ContainsKey(id)) continue;
+
+            var codigoEst = Safe(r, 4);
+            codigo2EstacionId.TryGetValue(codigoEst, out var estacionId);
+
+            nuevos.Add(new SismografoEF
+            {
+                Id = id,
+                IdentificadorSismografo = Nz(r[1]),
+                NroSerie = Nz(r[2]),
+                FechaAdquisicion = ParseDate(Safe(r, 3)),
+                EstacionId = estacionId
+            });
         }
-        return rows;
+        ctx.Set<SismografoEF>().AddRange(nuevos);
+        ctx.SaveChanges();
     }
 
-    private static string Get(Dictionary<string, string> r, string key)
-        => r.TryGetValue(key, out var v) ? (string.IsNullOrWhiteSpace(v) ? null : v) : null;
+    private static void ImportUsuarios(RedSismicaContext ctx, string file)
+    {
+        if (!File.Exists(file)) return;
+        var rows = ReadRows(file, 3);
+        var nuevos = new List<UsuarioEF>();
+        var existentes = ctx.Set<UsuarioEF>().AsNoTracking()
+            .ToDictionary(x => x.Id, _ => true);
 
-    private static Guid? GetGuid(Dictionary<string, string> r, string key)
-        => Guid.TryParse(Get(r, key), out var g) ? g : null;
+        foreach (var r in rows)
+        {
+            var id = ParseGuid(r[0]); if (id == Guid.Empty) continue;
+            if (existentes.ContainsKey(id)) continue;
 
-    private static int? GetInt(Dictionary<string, string> r, string key)
-        => int.TryParse(Get(r, key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) ? n : null;
+            nuevos.Add(new UsuarioEF
+            {
+                Id = id,
+                NombreUsuario = Nz(r[1]),
+                Contraseña = Nz(r[2])
+            });
+        }
+        BulkInsertIfAny(ctx, nuevos);
+    }
 
-    private static double? GetDouble(Dictionary<string, string> r, string key)
-        => double.TryParse(Get(r, key), NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : null;
+    private static void ImportEmpleados(RedSismicaContext ctx, string file)
+    {
+        if (!File.Exists(file)) return;
+        // Id;Nombre;Apellido;Mail;Telefono;UsuarioId
+        var rows = ReadRows(file, 1);
+        var nuevos = new List<EmpleadoEF>();
 
-    private static DateTime? GetDate(Dictionary<string, string> r, string key)
-        => DateTime.TryParse(Get(r, key), CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var d) ? d : null;
+        var usuarios = ctx.Set<UsuarioEF>().AsNoTracking()
+            .ToDictionary(u => u.Id, u => u);
+
+        var existentes = ctx.Set<EmpleadoEF>().AsNoTracking()
+            .ToDictionary(x => x.Id, _ => true);
+
+        foreach (var r in rows)
+        {
+            var id = ParseGuid(r[0]); if (id == Guid.Empty) continue;
+            if (existentes.ContainsKey(id)) continue;
+
+            Guid? usuarioId = null;
+            var uTxt = Safe(r, 5);
+            var uid = ParseGuid(uTxt);
+            if (uid != Guid.Empty && usuarios.ContainsKey(uid)) usuarioId = uid;
+
+            nuevos.Add(new EmpleadoEF
+            {
+                Id = id,
+                Nombre = Safe(r, 1),
+                Apellido = Safe(r, 2),
+                Mail = Safe(r, 3),
+                Telefono = Safe(r, 4),
+                UsuarioId = usuarioId
+            });
+        }
+        ctx.Set<EmpleadoEF>().AddRange(nuevos);
+        ctx.SaveChanges();
+    }
+
+    // ================== IMPORTS (AGREGADOS) ==================
+    private static void ImportEventos(RedSismicaContext ctx, string file)
+    {
+        if (!File.Exists(file))
+        {
+            System.Windows.Forms.MessageBox.Show($"No existe: {file}", "Import Eventos - Debug");
+            return;
+        }
+
+        // Diccionarios normalizados (trim + lower)
+        var alcanceByNombre = ctx.Set<AlcanceSismoEF>().AsNoTracking()
+            .Where(a => a.Nombre != null)
+            .AsEnumerable()
+            .GroupBy(a => a.Nombre!.Trim().ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.First().Id);
+
+        var clasifByNombre = ctx.Set<ClasificacionSismoEF>().AsNoTracking()
+            .Where(c => c.Nombre != null)
+            .AsEnumerable()
+            .GroupBy(c => c.Nombre!.Trim().ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.First().Id);
+
+        var origenByNombre = ctx.Set<OrigenDeGeneracionEF>().AsNoTracking()
+            .Where(o => o.Nombre != null)
+            .AsEnumerable()
+            .GroupBy(o => o.Nombre!.Trim().ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.First().Id);
+
+        var empleadoByMail = ctx.Set<EmpleadoEF>().AsNoTracking()
+            .Where(e => e.Mail != null)
+            .AsEnumerable()
+            .GroupBy(e => e.Mail!.Trim().ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.First().Id);
+
+        var existentes = ctx.Set<EventoSismicoEF>().AsNoTracking()
+            .ToDictionary(e => e.Id, _ => true);
+
+        // Id;FechaHoraInicio;FechaHoraDeteccion;LatEpi;LongEpi;LatHipo;LongHipo;Magnitud;EstadoActualNombre;AlcanceNombre;ClasificacionNombre;OrigenNombre;ResponsableMail
+        var rows = ReadRows(file, 13);
+        var nuevos = new List<EventoSismicoEF>();
+
+        int total = 0, ok = 0, dup = 0, skipAlc = 0, skipCla = 0, skipOri = 0, skipResp = 0, parse = 0;
+
+        foreach (var r in rows)
+        {
+            total++;
+
+            var id = ParseGuid(r[0]);
+            if (id == Guid.Empty) { parse++; continue; }
+            if (existentes.ContainsKey(id)) { dup++; continue; }
+
+            var alcanceNombre = Safe(r, 9).Trim().ToLowerInvariant();
+            var clasifNombre = Safe(r, 10).Trim().ToLowerInvariant();
+            var origenNombre = Safe(r, 11).Trim().ToLowerInvariant();
+            var responsableMl = Safe(r, 12).Trim().ToLowerInvariant();
+
+            if (!alcanceByNombre.TryGetValue(alcanceNombre, out var alcanceId)) { skipAlc++; Debug.WriteLine($"[EV] SKIP Alcance no encontrado: '{r[9]}'"); continue; }
+            if (!clasifByNombre.TryGetValue(clasifNombre, out var clasifId)) { skipCla++; Debug.WriteLine($"[EV] SKIP Clasificación no encontrada: '{r[10]}'"); continue; }
+            if (!origenByNombre.TryGetValue(origenNombre, out var origenId)) { skipOri++; Debug.WriteLine($"[EV] SKIP Origen no encontrado: '{r[11]}'"); continue; }
+            if (!empleadoByMail.TryGetValue(responsableMl, out var responsableId)) { skipResp++; Debug.WriteLine($"[EV] SKIP ResponsableMail no encontrado: '{r[12]}'"); continue; }
+
+            nuevos.Add(new EventoSismicoEF
+            {
+                Id = id,
+                FechaHoraInicio = ParseDate(r[1]) ?? DateTime.MinValue,
+                FechaHoraDeteccion = ParseDate(r[2]) ?? ParseDate(r[1]) ?? DateTime.MinValue,
+                LatitudEpicentro = ParseDouble(r[3]),
+                LongitudEpicentro = ParseDouble(r[4]),
+                LatitudHipocentro = ParseDouble(r[5]),
+                LongitudHipocentro = ParseDouble(r[6]),
+                ValorMagnitud = ParseDouble(r[7]),
+                EstadoActualNombre = Nz(r[8], "Autodetectado"),
+                AlcanceId = alcanceId,
+                ClasificacionId = clasifId,
+                OrigenId = origenId,
+                ResponsableId = responsableId
+            });
+            ok++;
+        }
+
+        if (nuevos.Count > 0)
+        {
+            ctx.Set<EventoSismicoEF>().AddRange(nuevos);
+            ctx.SaveChanges();
+        }
+
+        Debug.WriteLine($"[EV] filas={total}, ok={ok}, dup={dup}, parseErr={parse}, skipAlc={skipAlc}, skipCla={skipCla}, skipOri={skipOri}, skipResp={skipResp}");
+        System.Windows.Forms.MessageBox.Show(
+            $"EVENTOS importados: {ok}\n" +
+            $"dup={dup} | parseErr={parse}\n" +
+            $"skipAlc={skipAlc} | skipCla={skipCla} | skipOri={skipOri} | skipResp={skipResp}",
+            "Import Eventos - Debug");
+    }
+
+    private static void ImportCambiosDeEstado(RedSismicaContext ctx, string file)
+    {
+        if (!File.Exists(file)) return;
+
+        var empleadoByMail = ctx.Set<EmpleadoEF>().AsNoTracking()
+            .Where(e => e.Mail != null)
+            .AsEnumerable()
+            .GroupBy(e => e.Mail!.Trim().ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.First().Id);
+
+        var eventoExists = ctx.Set<EventoSismicoEF>().AsNoTracking()
+            .ToDictionary(e => e.Id, _ => true);
+
+        var existentes = ctx.Set<CambioDeEstadoEF>().AsNoTracking()
+            .ToDictionary(c => c.Id, _ => true);
+
+        // Id;EventoSismicoId;EstadoNombre;FechaHoraInicio;FechaHoraFin;ResponsableMail
+        var rows = ReadRows(file, 2);
+        var nuevos = new List<CambioDeEstadoEF>();
+
+        int total = 0, ok = 0, dup = 0, skipEv = 0;
+
+        foreach (var r in rows)
+        {
+            total++;
+
+            var id = ParseGuid(r[0]); if (id == Guid.Empty) continue;
+            if (existentes.ContainsKey(id)) { dup++; continue; }
+
+            var eventoId = ParseGuid(Safe(r, 1));
+            if (eventoId == Guid.Empty || !eventoExists.ContainsKey(eventoId)) { skipEv++; continue; }
+
+            Guid? responsableId = null;
+            var mail = Safe(r, 5).Trim().ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(mail) && empleadoByMail.TryGetValue(mail, out var rid))
+                responsableId = rid;
+
+            nuevos.Add(new CambioDeEstadoEF
+            {
+                Id = id,
+                EventoSismicoId = eventoId,
+                EstadoNombre = Nz(Safe(r, 2), "Autodetectado"),
+                FechaHoraInicio = ParseDate(Safe(r, 3)),
+                FechaHoraFin = ParseDate(Safe(r, 4)),
+                ResponsableId = responsableId
+            });
+            ok++;
+        }
+
+        if (nuevos.Count > 0)
+        {
+            ctx.Set<CambioDeEstadoEF>().AddRange(nuevos);
+            ctx.SaveChanges();
+        }
+
+        System.Windows.Forms.MessageBox.Show(
+            $"CAMBIOS importados: {ok}\n" +
+            $"dup={dup} | skipEv={skipEv}",
+            "Import Cambios - Debug");
+    }
+
+    // ================== IMPORTS (SERIES / MUESTRAS / DETALLES) ==================
+    private static void ImportSeriesTemporales(RedSismicaContext ctx, string file)
+    {
+        if (!File.Exists(file)) return;
+
+        var eventoExists = ctx.Set<EventoSismicoEF>().AsNoTracking()
+            .ToDictionary(e => e.Id, _ => true);
+
+        var sismografos = ctx.Set<SismografoEF>().AsNoTracking()
+            .ToDictionary(s => s.Id, _ => true);
+
+        var existentes = ctx.Set<SerieTemporalEF>().AsNoTracking()
+            .ToDictionary(s => s.Id, _ => true);
+
+        // Id;CondicionAlarma;FechaHoraInicioRegistroMuestras;FechaHoraRegistro;FrecuenciaMuestreo;SismografoId;EventoSismicoId
+        var rows = ReadRows(file, 7);
+        var nuevos = new List<SerieTemporalEF>();
+
+        foreach (var r in rows)
+        {
+            var id = ParseGuid(r[0]); if (id == Guid.Empty) continue;
+            if (existentes.ContainsKey(id)) continue;
+
+            var sismId = ParseGuid(Safe(r, 5));
+            Guid? sismografoId = sismografos.ContainsKey(sismId) ? sismId : (Guid?)null;
+
+            var evId = ParseGuid(Safe(r, 6));
+            Guid? eventoId = eventoExists.ContainsKey(evId) ? evId : (Guid?)null;
+
+            nuevos.Add(new SerieTemporalEF
+            {
+                Id = id,
+                CondicionAlarma = ParseBool(r[1]),
+                FechaHoraInicioRegistroMuestras = ParseDate(r[2]) ?? DateTime.MinValue,
+                FechaHoraRegistro = ParseDate(r[3]) ?? DateTime.MinValue,
+                FrecuenciaMuestreo = ParseDouble(r[4]),
+                SismografoId = sismografoId,
+                EventoSismicoId = eventoId
+            });
+        }
+
+        ctx.Set<SerieTemporalEF>().AddRange(nuevos);
+        ctx.SaveChanges();
+    }
+
+    private static void ImportMuestras(RedSismicaContext ctx, string file)
+    {
+        if (!File.Exists(file)) return;
+
+        var serieExists = ctx.Set<SerieTemporalEF>().AsNoTracking()
+            .ToDictionary(s => s.Id, _ => true);
+
+        var existentes = ctx.Set<MuestraSismicaEF>().AsNoTracking()
+            .ToDictionary(m => m.Id, _ => true);
+
+        // Id;SerieTemporalId;FechaHoraMuestra
+        var rows = ReadRows(file, 3);
+        var nuevos = new List<MuestraSismicaEF>();
+
+        foreach (var r in rows)
+        {
+            var id = ParseGuid(r[0]); if (id == Guid.Empty) continue;
+            if (existentes.ContainsKey(id)) continue;
+
+            var serieId = ParseGuid(r[1]);
+            if (serieId == Guid.Empty || !serieExists.ContainsKey(serieId)) continue;
+
+            nuevos.Add(new MuestraSismicaEF
+            {
+                Id = id,
+                SerieTemporalId = serieId,
+                FechaHoraMuestra = ParseDate(r[2]) ?? DateTime.MinValue
+            });
+        }
+
+        ctx.Set<MuestraSismicaEF>().AddRange(nuevos);
+        ctx.SaveChanges();
+    }
+
+    private static void ImportDetallesMuestra(RedSismicaContext ctx, string file)
+    {
+        if (!File.Exists(file)) return;
+
+        // 1) Cargamos todas las líneas y saltamos SOLAMENTE el encabezado real (1ra línea).
+        var rawLines = File.ReadAllLines(file)
+                           .Select(l => l?.Trim())
+                           .Where(l => !string.IsNullOrWhiteSpace(l))
+                           .ToList();
+        if (rawLines.Count == 0) return;
+
+        // Si la primera línea parece encabezado (empieza por "Id;"), la salto.
+        if (rawLines[0].StartsWith("Id;", StringComparison.OrdinalIgnoreCase))
+            rawLines.RemoveAt(0);
+
+        // 2) Diccionarios de FKs
+        var muestras = ctx.Set<MuestraSismicaEF>().AsNoTracking()
+            .ToDictionary(m => m.Id, _ => true);
+
+        var tipoByDen = ctx.Set<TipoDeDatoEF>().AsNoTracking()
+            .Where(t => t.Denominacion != null)
+            .AsEnumerable()
+            .GroupBy(t => t.Denominacion!.Trim().ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.First().Id);
+
+        var existentes = ctx.Set<DetalleMuestraEF>().AsNoTracking()
+            .ToDictionary(d => d.Id, _ => true);
+
+        // 3) Parseo e inserción
+        var nuevos = new List<DetalleMuestraEF>();
+        int total = 0, ok = 0, skipFkMuestra = 0, skipTipo = 0, dup = 0, parse = 0;
+
+        foreach (var line in rawLines)
+        {
+            total++;
+            var r = line.Split(';').Select(p => p.Trim()).ToArray();
+            if (r.Length < 4) { parse++; continue; }
+
+            var id = ParseGuid(r[0]);
+            if (id == Guid.Empty) { parse++; continue; }
+            if (existentes.ContainsKey(id)) { dup++; continue; }
+
+            var muestraId = ParseGuid(r[1]);
+            if (muestraId == Guid.Empty || !muestras.ContainsKey(muestraId))
+            {
+                skipFkMuestra++;
+                Debug.WriteLine($"[DETALLE] SKIP muestra inexistente: {r[1]} (línea {total})");
+                continue;
+            }
+
+            var denKey = (Nz(r[2])).Trim().ToLowerInvariant();
+            if (!tipoByDen.TryGetValue(denKey, out var tipoId))
+            {
+                skipTipo++;
+                Debug.WriteLine($"[DETALLE] SKIP tipo no encontrado por denominación: '{r[2]}' (línea {total})");
+                continue;
+            }
+
+            double valor = ParseDouble(r[3]);
+
+            nuevos.Add(new DetalleMuestraEF
+            {
+                Id = id,
+                MuestraSismicaId = muestraId,
+                TipoDeDatoId = tipoId,
+                Valor = valor
+            });
+            ok++;
+        }
+
+        if (nuevos.Count > 0)
+        {
+            ctx.Set<DetalleMuestraEF>().AddRange(nuevos);
+            ctx.SaveChanges();
+        }
+
+        Debug.WriteLine($"[DETALLE] filas={total}, ok={ok}, dup={dup}, parseErr={parse}, skipMuestra={skipFkMuestra}, skipTipo={skipTipo}");
+
+        // Verificación visible (podés quitarlo cuando termines de depurar)
+        System.Windows.Forms.MessageBox.Show(
+            $"DETALLES importados: {ok}\n" +
+            $"dup={dup} | parseErr={parse} | skipMuestra={skipFkMuestra} | skipTipo={skipTipo}",
+            "Import Detalles - Debug");
+    }
+
+    // ================== HELPERS ==================
+    private static void BulkInsertIfAny<T>(RedSismicaContext ctx, IList<T> data) where T : class
+    {
+        if (data == null || data.Count == 0) return;
+        ctx.BulkInsert(data);
+    }
+
+    private static List<string[]> ReadRows(string file, int minCols = 1)
+    {
+        var list = new List<string[]>();
+        using var sr = new StreamReader(file);
+        string? line;
+        bool headerChecked = false;
+
+        while ((line = sr.ReadLine()) != null)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            var parts = line.Split(';').Select(p => p.Trim()).ToArray();
+
+            // Saltear encabezado si detectamos nombres
+            if (!headerChecked)
+            {
+                headerChecked = true;
+                if (LooksLikeHeader(parts)) continue;
+            }
+
+            if (parts.Length < minCols)
+            {
+                Debug.WriteLine($"[IMPORT] Línea salteada (cols<{minCols}): {line}");
+                continue;
+            }
+            list.Add(parts);
+        }
+        return list;
+    }
+
+    private static bool LooksLikeHeader(string[] cols)
+    {
+        // normaliza
+        var norm = cols.Select(c => (c ?? "").Trim().ToLowerInvariant()).ToArray();
+
+        // columnas típicas que SI podemos considerar como encabezado (exact match)
+        var known = new HashSet<string>(new[]
+        {
+            "id","nombre","descripcion","fecha","fechahorainicio","fechahoradeteccion",
+            "latitud","longitud","valor","muestrasismicaid","tipodedatodenominacion",
+            "frecuenciamuestreo","estadonombre","eventoid","responsablemail",
+            "serietemporalid","fechahoramuestra","codigoestacion","nombreunidadmedida"
+        });
+
+        // si TODAS las columnas NO parecen guids/fechas/numéricas
+        bool noneLooksLikeData = norm.All(s =>
+            !Guid.TryParse(s, out _) &&
+            !DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out _) &&
+            !double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out _)
+        );
+
+        // y ALGUNA columna coincide EXACTAMENTE con nombres típicos
+        bool hasKnownNames = norm.Any(s => known.Contains(s));
+
+        return noneLooksLikeData && hasKnownNames;
+    }
+
+    private static Guid ParseGuid(string s)
+        => Guid.TryParse(Nz(s), out var g) ? g : Guid.Empty;
+
+    private static bool ParseBool(string s)
+        => bool.TryParse(Nz(s), out var b) ? b : Nz(s) == "1";
+
+    private static double ParseDouble(string s)
+        => double.TryParse(Nz(s), NumberStyles.Float, CI, out var d) ? d : 0d;
+
+    private static DateTime? ParseDate(string s)
+    {
+        s = Nz(s);
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        if (DateTime.TryParseExact(s, DateFormats, CI, DateTimeStyles.AssumeLocal, out var dt)) return dt;
+        if (DateTime.TryParse(s, CI, DateTimeStyles.AssumeLocal, out dt)) return dt;
+        return null;
+    }
+
+    private static string Nz(string s, string def = "")
+        => string.IsNullOrWhiteSpace(s) ? def : s.Trim();
+
+    private static string Safe(string[] arr, int idx, string def = "")
+        => (idx >= 0 && idx < arr.Length) ? arr[idx]?.Trim() ?? def : def;
 }

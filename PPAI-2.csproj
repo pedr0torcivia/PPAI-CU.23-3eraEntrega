@@ -9,6 +9,12 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+	  <Compile Remove="import\**" />
+	  <EmbeddedResource Remove="import\**" />
+	  <None Remove="import\**" />
+	</ItemGroup>
+
+	<ItemGroup>
 	  <PackageReference Include="EFCore.BulkExtensions" Version="6.*" />
 	  <PackageReference Include="Microsoft.EntityFrameworkCore" Version="6.0.29" />
 	  <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="6.0.29">
@@ -21,10 +27,6 @@
 	    <PrivateAssets>all</PrivateAssets>
 	    <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 	  </PackageReference>
-	</ItemGroup>
-
-	<ItemGroup>
-	  <Folder Include="import\" />
 	</ItemGroup>
 
 </Project>

@@ -1,5 +1,10 @@
-﻿using System;
+﻿// PPAI_Revisiones.Modelos.Estados/Autodetectado.cs
+using System;
 using System.Collections.Generic;
+
+// Alias
+using M = PPAI_Revisiones.Modelos;   // EventoSismico, CambioDeEstado
+using D = PPAI_Revisiones.Dominio;   // Empleado
 
 namespace PPAI_Revisiones.Modelos.Estados
 {
@@ -8,31 +13,26 @@ namespace PPAI_Revisiones.Modelos.Estados
         public override string Nombre => "Autodetectado";
         public override bool EsAutodetectado => true;
 
-        // registrarEstadoBloqueado(ctx, cambiosEstado, fechaHoraActual, responsable)
         public override void registrarEstadoBloqueado(
-            EventoSismico ctx,
-            List<CambioDeEstado> cambiosEstado,
+            M.EventoSismico ctx,
+            List<M.CambioDeEstado> cambiosEstado,
             DateTime fechaHoraActual,
-            Empleado responsable)
+            D.Empleado responsable)
         {
-            // 1️ Buscar y cerrar cambio abierto (si existe)
+            // 1️⃣ Buscar y cerrar cambio abierto (si existe)
             var abierto = BuscarCambioAbierto(cambiosEstado);
-            if (abierto != null && !abierto.FechaHoraFin.HasValue)   // ← solo si está abierto
+            if (abierto != null && !abierto.FechaHoraFin.HasValue)
                 abierto.SetFechaHoraFin(fechaHoraActual);
 
-            // 2️ Crear nuevo estado Bloqueado
+            // 2️⃣ Crear nuevo estado Bloqueado
             var nuevoEstado = new Bloqueado();
 
-            // 3️ Crear CE y agregarlo
-            var ce = new CambioDeEstado
+            // 3️⃣ Crear CE y agregarlo
+            var ce = new M.CambioDeEstado
             {
-                Id = Guid.NewGuid(),
-                EventoSismicoId = ctx.Id,          // <-- FALTA: FK al evento
                 EstadoActual = nuevoEstado,
-                EstadoNombre = "Bloqueado",         // se guarda el nombre
                 FechaHoraInicio = fechaHoraActual,
                 FechaHoraFin = null,
-                ResponsableId = responsable?.Id,    // FK al responsable
                 Responsable = responsable
             };
             cambiosEstado.Add(ce);
@@ -41,8 +41,7 @@ namespace PPAI_Revisiones.Modelos.Estados
             ctx.SetEstado(nuevoEstado);
         }
 
-        // Helper local
-        private static CambioDeEstado BuscarCambioAbierto(List<CambioDeEstado> cambios)
+        private static M.CambioDeEstado BuscarCambioAbierto(List<M.CambioDeEstado> cambios)
             => cambios?.Find(c => c.EsEstadoActual());
     }
 }
