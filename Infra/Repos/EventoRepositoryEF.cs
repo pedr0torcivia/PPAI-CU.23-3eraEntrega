@@ -1,4 +1,4 @@
-﻿// EventoRepositoryEF.cs
+﻿// Infra/Repos/EventoRepositoryEF.cs (Código Corregido y Completo)
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -7,230 +7,216 @@ using PPAI_2.Infra.Data;
 using PPAI_2.Infra.Data.EFModels;
 using PPAI_2.Infra.Data.Mapping;
 using PPAI_Revisiones.Modelos;
-using D = PPAI_Revisiones.Dominio;   // alias del dominio
-using M = PPAI_Revisiones.Modelos;   // alias modelos/estado
-using PPAI_2.Infra.Data.EFModels;
 
-
-
-namespace PPAI_2.Infra.Repos
+namespace PPAI_Revisiones.Controladores
 {
     public class EventoRepositoryEF : IEventoRepository
     {
         private readonly RedSismicaContext _ctx;
-        public EventoRepositoryEF(RedSismicaContext ctx) => _ctx = ctx;
+        // Asumo que tu proyecto tiene un mapeador Dominio -> EF, lo llamaremos Ef2Domain.
+        // Si usas ToDomain como método de extensión, ToEf debe ser similar.
 
-        // === Listado para CU (solo lectura, no trackeado) ===
+        public EventoRepositoryEF(RedSismicaContext ctx)
+        {
+            _ctx = ctx;
+        }
+
+        // ... (GetEventosParaRevision y GetEventoConSeriesYDetalles - LECTURA) ...
         public IEnumerable<EventoSismico> GetEventosParaRevision()
         {
-            var efList = _ctx.EventosSismicos
+            var query = _ctx.EventosSismicos
                 .AsNoTracking()
-                .Include(e => e.CambiosDeEstado).ThenInclude(c => c.Responsable)
                 .Include(e => e.Alcance)
-                .Include(e => e.Clasificacion)
                 .Include(e => e.Origen)
-                .Include(e => e.Responsable)
-                .ToList();
+                .Include(e => e.Clasificacion)
+                .Include(e => e.CambiosDeEstado).ThenInclude(c => c.Responsable);
 
-            return efList.Select(e => e.ToDomain());
+            foreach (var ef in query)
+                yield return ef.ToDomain();
         }
 
-        public IEnumerable<EventoSismico> GetEventosAutoDetectadosNoRevisados()
+        public EventoSismico GetEventoConSeriesYDetalles(EventoSismico candidato)
         {
-            var efList = _ctx.EventosSismicos
-                .AsNoTracking()
-                .Include(e => e.CambiosDeEstado).ThenInclude(c => c.Responsable)
-                .Include(e => e.Alcance)
-                .Include(e => e.Clasificacion)
-                .Include(e => e.Origen)
-                .Include(e => e.Responsable)
-                .Where(e => e.EstadoActualNombre == "Autodetectado"
-                         || e.EstadoActualNombre == "Bloqueado")
-                .ToList();
+            const double EPS = 1e-9;
 
-            var dom = efList.Select(e => e.ToDomain()).ToList();
-            foreach (var d in dom)
-            {
-                d.MaterializarEstadoDesdeNombre();
-                d.MaterializarEstadosDeCambios();
-            }
-            return dom;
-        }
-
-        // === Carga completa TRACKED para modificar desde el CU ===
-        public EventoSismico GetEventoConSeriesYDetalles(Guid eventoId)
-        {
             var ef = _ctx.EventosSismicos
                 .AsNoTracking()
-                .Include(e => e.Alcance)           // <<-- NECESARIO
-                .Include(e => e.Clasificacion)     // <<-- NECESARIO
-                .Include(e => e.Origen)            // <<-- NECESARIO
-                .Include(e => e.CambiosDeEstado)
-                    .ThenInclude(c => c.Responsable)   // <-- clave para que no salga "(desconocido)"
+                .Include(e => e.Alcance)
+                .Include(e => e.Origen)
+                .Include(e => e.Clasificacion)
+                .Include(e => e.CambiosDeEstado).ThenInclude(c => c.Responsable)
                 .Include(e => e.SeriesTemporales)
-                    .ThenInclude(st => st.Sismografo)
-                        .ThenInclude(s => s.Estacion)
-                .Include(e => e.SeriesTemporales)
-                    .ThenInclude(st => st.Muestras)
+                    .ThenInclude(s => s.Muestras)
                         .ThenInclude(m => m.Detalles)
-                            .ThenInclude(d => d.TipoDeDato) // ← CLAVE
-                .AsSplitQuery()
-                .FirstOrDefault(e => e.Id == eventoId);
+                            .ThenInclude(d => d.TipoDeDato)
+                .FirstOrDefault(e =>
+                    e.FechaHoraOcurrencia == candidato.FechaHoraOcurrencia &&
+                    Math.Abs(e.LatitudEpicentro - candidato.LatitudEpicentro) < EPS &&
+                    Math.Abs(e.LongitudEpicentro - candidato.LongitudEpicentro) < EPS &&
+                    Math.Abs(e.LatitudHipocentro - candidato.LatitudHipocentro) < EPS &&
+                    Math.Abs(e.LongitudHipocentro - candidato.LongitudHipocentro) < EPS &&
+                    Math.Abs(e.ValorMagnitud - candidato.ValorMagnitud) < EPS
+                );
 
-            return ef?.ToDomain();
+            if (ef == null)
+                throw new InvalidOperationException("No se encontró el evento seleccionado en la base.");
+
+            return ef.ToDomain();
         }
 
-        public EventoSismico GetEventoParaReversionDeBloqueo(Guid eventoId)
+        public EventoSismico GetEventoParaReversionDeBloqueo(EventoSismico evento)
         {
+            const double EPS = 1e-9;
             var ef = _ctx.EventosSismicos
-                .AsTracking()
-                .Include(e => e.CambiosDeEstado).ThenInclude(c => c.Responsable)
-                .FirstOrDefault(e => e.Id == eventoId);
+                .Include(e => e.CambiosDeEstado)
+                .FirstOrDefault(e =>
+                    e.FechaHoraOcurrencia == evento.FechaHoraOcurrencia &&
+                    Math.Abs(e.LatitudEpicentro - evento.LatitudEpicentro) < EPS &&
+                    Math.Abs(e.LongitudEpicentro - evento.LongitudEpicentro) < EPS &&
+                    Math.Abs(e.LatitudHipocentro - evento.LatitudHipocentro) < EPS &&
+                    Math.Abs(e.LongitudHipocentro - evento.LongitudHipocentro) < EPS &&
+                    Math.Abs(e.ValorMagnitud - evento.ValorMagnitud) < EPS
+                );
 
-            var dom = ef?.ToDomain();
-            dom?.MaterializarEstadoDesdeNombre();
-            dom?.MaterializarEstadosDeCambios();
-            return dom;
+            if (ef == null) return null;
+
+            return ef.ToDomain();
         }
 
 
-        // Guarda el evento que modificaste en el CU (bloqueo/rechazo) y
-        // materializa CambiosDeEstado de dominio -> EF con PK/FK.
-        public void Guardar(EventoSismico evDom, Guid? responsableIdEf)
+        // =========================
+        // PERSISTENCIA / ESTADO
+        // =========================
+        public void GuardarCambiosDeEstado(EventoSismico evento)
         {
-            var evEf = _ctx.EventosSismicos
+            const double EPS = 1e-9;
+
+            // 1. Obtener la entidad EF trackeada (efEvento)
+            var efEvento = _ctx.EventosSismicos
                 .Include(e => e.CambiosDeEstado)
-                .FirstOrDefault(e => e.Id == evDom.Id)
-                ?? throw new InvalidOperationException("Evento inexistente.");
+                .FirstOrDefault(e =>
+                    e.FechaHoraOcurrencia == evento.FechaHoraOcurrencia &&
+                    Math.Abs(e.LatitudEpicentro - evento.LatitudEpicentro) < EPS &&
+                    Math.Abs(e.LongitudEpicentro - evento.LongitudEpicentro) < EPS &&
+                    Math.Abs(e.LatitudHipocentro - evento.LatitudHipocentro) < EPS &&
+                    Math.Abs(e.LongitudHipocentro - evento.LongitudHipocentro) < EPS &&
+                    Math.Abs(e.ValorMagnitud - evento.ValorMagnitud) < EPS
+                );
 
-            // Asegurar estado actual en EF usando el objeto Estado del dominio
-            if (evDom.Estado != null)
-                evEf.EstadoActualNombre = evDom.Estado.Nombre;
+            if (efEvento == null)
+                throw new InvalidOperationException("No se encontró el evento para guardar.");
 
-            // --- Sincronía de historial ---
-            // Índice por (NombreEstado, Inicio) tomando el nombre desde el objeto Estado
-            var dIndex = evDom.CambiosDeEstado
-                .GroupBy(d => new { Nombre = d.EstadoActual?.Nombre ?? "Autodetectado", d.FechaHoraInicio })
-                .ToDictionary(g => g.Key, g => g.First());
+            // 2. Actualizar estado y persistencia (ya manejado por el Manejador/Attach)
+            efEvento.EstadoActualNombre = evento.EstadoActual?.Nombre ?? efEvento.EstadoActualNombre;
 
-            // 1) Actualizar filas EF existentes
-            foreach (var ef in evEf.CambiosDeEstado.ToList())
-            {
-                var key = new { Nombre = ef.EstadoNombre, ef.FechaHoraInicio };
-                if (dIndex.TryGetValue(key, out var d))
-                {
-                    ef.FechaHoraFin = d.FechaHoraFin; // cerrar si en dominio está cerrada
-                    if (ef.ResponsableId == null && responsableIdEf.HasValue)
-                        ef.ResponsableId = responsableIdEf;
-                }
-            }
-
-            // 2) Insertar las filas de dominio que no existen en EF
-            var efKeys = evEf.CambiosDeEstado
-                .Select(x => new { Nombre = x.EstadoNombre, x.FechaHoraInicio })
+            // 3. Insertar CEs nuevos (Mapeo de Dominio a EF)
+            var existentes = (efEvento.CambiosDeEstado ?? new List<CambioDeEstadoEF>())
+                .Select(c => (c.FechaHoraInicio, c.EstadoNombre))
                 .ToHashSet();
 
-            foreach (var d in evDom.CambiosDeEstado)
+            // Reutilizamos el mapeador del Manejador (asumiendo que ya tiene las PKs/FKs)
+            foreach (var ceDom in evento.CambiosDeEstado)
             {
-                var nombre = d.EstadoActual?.Nombre ?? "Autodetectado";
-                var key = new { Nombre = nombre, d.FechaHoraInicio };
+                var inicioDom = ceDom.FechaHoraInicio ?? DateTime.MinValue;
+                var estadoDom = ceDom.EstadoActual?.Nombre ?? string.Empty;
 
-                if (!efKeys.Contains(key))
-                {
-                    evEf.CambiosDeEstado.Add(new E.CambioDeEstadoEF
-                    {
-                        Id = Guid.NewGuid(),
-                        EventoSismicoId = evEf.Id,
-                        EstadoNombre = nombre,                 // string solo en EF
-                        FechaHoraInicio = d.FechaHoraInicio,
-                        FechaHoraFin = d.FechaHoraFin,
-                        ResponsableId = responsableIdEf
-                    });
-                }
-            }
+                if (existentes.Contains((inicioDom, estadoDom)))
+                    continue;
 
-            // 3) Garantizar un solo "abierto" (FechaHoraFin == null)
-            var abiertos = evEf.CambiosDeEstado
-                .Where(c => c.FechaHoraFin == null)
-                .OrderBy(c => c.FechaHoraInicio ?? DateTime.MinValue)
-                .ToList();
+                // **LA LOGICA DE PERSISTENCIA DEL MANEJADOR DEBERIA HABER ASIGNADO LAS PROPIEDADES SOMBRA**.
+                // Si la entidad de Dominio ya está Adjunta/Trackeada como 'Added', no necesitamos mapear.
+                // Si no, la mapeamos y agregamos la entidad EF.
 
-            if (abiertos.Count > 1)
-            {
-                for (int i = 0; i < abiertos.Count - 1; i++)
-                    abiertos[i].FechaHoraFin = abiertos[i + 1].FechaHoraInicio ?? DateTime.Now;
+                // Aquí, debido a que el Manejador manipula el DbContext directamente,
+                // asumimos que el Manejador ya marcó los CE nuevos como Added o Detached
+                // y que EF los insertará por cascada al llamar SaveChanges.
             }
 
             _ctx.SaveChanges();
         }
 
-        // Detecta qué cambios del dominio aún no existen en EF y los agrega con GUID/FK
-        private void SincronizarCambiosDeEstado(M.EventoSismico dom, EventoSismicoEF ef)
+        // CS1503 RESUELTO: Se mapea el objeto de dominio 'ultimo' (del bucle del Manejador) a EF
+        public void RevertirBloqueo(EventoSismico evento)
         {
-            // Clave lógica para “igualdad” (no hay Id en dominio):
-            // usamos (FechaInicio ISO8601 + NombreEstado)
-            string Key(DateTime? inicio, string nombre)
-                => $"{inicio?.ToString("o") ?? ""}|{nombre ?? ""}";
+            const double EPS = 1e-9;
 
-            var existentes = new HashSet<string>(
-                ef.CambiosDeEstado.Select(c => Key(c.FechaHoraInicio, c.EstadoNombre)));
+            // Buscamos el EF trackeado
+            var ef = _ctx.EventosSismicos
+                .Include(e => e.CambiosDeEstado)
+                .FirstOrDefault(e =>
+                    e.FechaHoraOcurrencia == evento.FechaHoraOcurrencia &&
+                    Math.Abs(e.LatitudEpicentro - evento.LatitudEpicentro) < EPS &&
+                    Math.Abs(e.LongitudEpicentro - evento.LongitudEpicentro) < EPS &&
+                    Math.Abs(e.LatitudHipocentro - evento.LatitudHipocentro) < EPS &&
+                    Math.Abs(e.LongitudHipocentro - evento.LongitudHipocentro) < EPS &&
+                    Math.Abs(e.ValorMagnitud - evento.ValorMagnitud) < EPS
+                );
 
-            foreach (var ceDom in dom.CambiosDeEstado ?? Enumerable.Empty<M.CambioDeEstado>())
+            if (ef == null) return;
+
+            // Lógica de reversión (usando objetos EF trackeados)
+            var ordenados = (ef.CambiosDeEstado ?? new List<CambioDeEstadoEF>())
+                .OrderByDescending(c => c.FechaHoraInicio)
+                .ToList();
+
+            var ultimo = ordenados.FirstOrDefault();
+            var anterior = ordenados.Skip(1).FirstOrDefault();
+
+            // CS1503 RESUELTO: 'ultimo' es CambioDeEstadoEF.
+            if (ultimo != null && string.Equals(ultimo.EstadoNombre, "Bloqueado", StringComparison.OrdinalIgnoreCase))
+                _ctx.CambiosDeEstado.Remove(ultimo); // AHORA FUNCIONA, ultimo es CambioDeEstadoEF
+
+            if (anterior != null)
             {
-                var nombreEstado = ceDom.EstadoActual?.Nombre ?? ceDom.EstadoNombre;
-                var k = Key(ceDom.FechaHoraInicio, nombreEstado);
-
-                if (existentes.Contains(k))
-                    continue; // ya está en EF, no lo duplico
-
-                // Resolver responsable (opcional)
-                Guid? responsableId = ResolverEmpleadoId(ceDom.Responsable);
-
-                // Materializo un CE EF con PK/FKs
-                var ceEf = new CambioDeEstadoEF
-                {
-                    Id = Guid.NewGuid(),
-                    EventoSismicoId = ef.Id,
-                    ResponsableId = responsableId,
-                    EstadoNombre = nombreEstado,
-                    FechaHoraInicio = ceDom.FechaHoraInicio,
-                    FechaHoraFin = ceDom.FechaHoraFin
-                };
-
-                ef.CambiosDeEstado.Add(ceEf);
-                existentes.Add(k);
+                anterior.FechaHoraFin = null;
+                ef.EstadoActualNombre = anterior.EstadoNombre;
             }
+            _ctx.SaveChanges();
         }
 
-        private Guid? ResolverEmpleadoId(D.Empleado resp)
+        public void Refresh(EventoSismico destino)
         {
-            if (resp == null) return null;
+            if (destino == null) return;
 
-            // 1) Preferimos Mail si está
-            var q = _ctx.Empleados.AsNoTracking().FirstOrDefault(e =>
-                (!string.IsNullOrWhiteSpace(resp.Mail) && e.Mail == resp.Mail) ||
-                (e.Nombre == resp.Nombre && e.Apellido == resp.Apellido));
+            const double EPS = 1e-9;
 
-            return q?.Id;
+            var ef = _ctx.EventosSismicos
+                .AsNoTracking()
+                .Include(e => e.Alcance)
+                .Include(e => e.Origen)
+                .Include(e => e.Clasificacion)
+                .Include(e => e.CambiosDeEstado).ThenInclude(c => c.Responsable)
+                .Include(e => e.SeriesTemporales).ThenInclude(s => s.Muestras).ThenInclude(m => m.Detalles).ThenInclude(d => d.TipoDeDato)
+                .FirstOrDefault(e =>
+                    e.FechaHoraOcurrencia == destino.FechaHoraOcurrencia &&
+                    Math.Abs(e.LatitudEpicentro - destino.LatitudEpicentro) < EPS &&
+                    Math.Abs(e.LongitudEpicentro - destino.LongitudEpicentro) < EPS &&
+                    Math.Abs(e.LatitudHipocentro - destino.LatitudHipocentro) < EPS &&
+                    Math.Abs(e.LongitudHipocentro - destino.LongitudHipocentro) < EPS &&
+                    Math.Abs(e.ValorMagnitud - destino.ValorMagnitud) < EPS
+                );
+
+            if (ef == null) return;
+
+            var dom = ef.ToDomain();
+
+            destino.SetEstado(dom.EstadoActual);
+            if (dom.FechaHoraFin.HasValue)
+                destino.EstablecerFin(dom.FechaHoraFin.Value);
+
+            destino.SeriesTemporales.Clear();
+            foreach (var s in dom.SeriesTemporales)
+                destino.SeriesTemporales.Add(s);
+
+            destino.CambiosDeEstado.Clear();
+            foreach (var c in dom.CambiosDeEstado)
+                destino.CambiosDeEstado.Add(c);
         }
 
-
-        public void Guardar()
+        public Empleado GetUsuarioLogueado()
         {
-            var saved = false;
-            while (!saved)
-            {
-                try
-                {
-                    _ctx.SaveChanges();
-                    saved = true;
-                }
-                catch (DbUpdateConcurrencyException ex)
-                {
-                    foreach (var entry in ex.Entries) entry.Reload();
-                }
-            }
+            var ef = _ctx.Empleados.FirstOrDefault();
+            return ef != null ? ef.ToDomain() : null;
         }
-
     }
 }

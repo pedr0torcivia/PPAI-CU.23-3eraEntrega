@@ -6,6 +6,9 @@ using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
 using System.Linq;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.InMemory; // NECESARIO para UseInMemoryDatabase
 
 
 namespace PPAI_Revisiones.Boundary
@@ -17,41 +20,56 @@ namespace PPAI_Revisiones.Boundary
         public PantallaNuevaRevision()
         {
             InitializeComponent();
-            using var ctx = new RedSismicaContext();
-            var flag = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "import.done");
-            if (!File.Exists(flag) && !ctx.EventosSismicos.Any())
+
+            // 1. Configuración de la base de datos en memoria (Resuelve CS1061/UseInMemoryDatabase)
+            var options = new DbContextOptionsBuilder<RedSismicaContext>()
+                .UseInMemoryDatabase(databaseName: "TemporalStartupDB")
+                .Options;
+
+            // 2. Inicialización de la Infraestructura (Contexto y Repositorio)
+            // Usamos un bloque para limitar el alcance del contexto de inicialización
+            using (var ctx_init = new RedSismicaContext(options))
             {
-                BulkTxtImporter.Run(ctx, Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "import"));
-                File.WriteAllText(flag, "ok");
+                // Inicialización del Seed (Impoartación de datos)
+                var flag = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "import.done");
+                if (!File.Exists(flag) && !ctx_init.EventosSismicos.Any())
+                {
+                    // Asumo que BulkTxtImporter.Run es accesible desde aquí (clase interna o pública)
+                    BulkTxtImporter.Run(ctx_init, Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "import"));
+                    File.WriteAllText(flag, "ok");
+                }
             }
 
-            manejador = new ManejadorRegistrarRespuesta();
+            // 3. INYECCIÓN DE DEPENDENCIAS AL MANEJADOR (Resuelve CS7036)
+            // Creamos las instancias que el Manejador necesita
+            var ctx_runtime = new RedSismicaContext(options);
+            var repo_runtime = new EventoRepositoryEF(ctx_runtime); // Repositorio usa el Contexto de runtime
+
+            // Instanciamos el Manejador pasando sus dependencias
+            manejador = new ManejadorRegistrarRespuesta(ctx_runtime, repo_runtime);
         }
 
         private void PantallaNuevaRevision_Load(object sender, EventArgs e)
         {
             foreach (Control ctrl in this.Controls)
             {
-                // Oculta todos los controles excepto btnIniciarCU al cargar la pantalla
                 if (ctrl != btnIniciarCU)
                     ctrl.Visible = false;
             }
 
-            // Centra el botón de iniciar
             btnIniciarCU.Left = (this.ClientSize.Width - btnIniciarCU.Width) / 2;
             btnIniciarCU.Top = (this.ClientSize.Height - btnIniciarCU.Height) / 2;
         }
 
         private void btnIniciarCU_Click(object sender, EventArgs e)
         {
-            // Mostrar todos los controles (la visibilidad individual se gestiona más adelante)
             foreach (Control ctrl in this.Controls)
                 ctrl.Visible = true;
 
             btnIniciarCU.Visible = false;
 
-            manejador.ReiniciarCU(this); // si hay algo, lo resetea
-            opcionRegistrarResultadoRevisionManual(); // vuelve a iniciar
+            manejador.ReiniciarCU(this);
+            opcionRegistrarResultadoRevisionManual();
         }
 
         public void opcionRegistrarResultadoRevisionManual()
@@ -72,11 +90,8 @@ namespace PPAI_Revisiones.Boundary
             gridEventos.Columns.Clear();
             gridEventos.DataSource = eventos;
 
-            // 🔴 Asegura repintado en WinForms cuando la lista anterior tenía misma forma
             gridEventos.Refresh();
         }
-
-
 
         private void gridEventos_SelectionChanged(object sender, EventArgs e)
         {
@@ -97,17 +112,14 @@ namespace PPAI_Revisiones.Boundary
             txtDetalleEvento.Text = detalle;
         }
 
-        // Ahora admite imagen: si 'contenido' es una ruta válida → carga PNG/JPG en picSismograma; si no, muestra texto.
         public void MostrarSismograma(string contenido)
         {
             try
             {
-                // 1) LOG para ver qué viene
                 var pathIn = contenido?.Trim().Trim('"');
 
-                // 2) SIEMPRE genero una imagen temporal (fallback) para garantizar visualización
                 string fallback = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
-                                   $"sismograma_fallback_{DateTime.Now:yyyyMMdd_HHmmssfff}.png");
+                                                         $"sismograma_fallback_{DateTime.Now:yyyyMMdd_HHmmssfff}.png");
 
                 using (var bmp = new Bitmap(600, 180))
                 using (var g = Graphics.FromImage(bmp))
@@ -130,7 +142,6 @@ namespace PPAI_Revisiones.Boundary
                     bmp.Save(fallback, System.Drawing.Imaging.ImageFormat.Png);
                 }
 
-                // 3) Mostrar SIEMPRE la imagen recién creada
                 txtSismograma.Visible = false;
                 picSismograma.Visible = true;
 
@@ -154,8 +165,6 @@ namespace PPAI_Revisiones.Boundary
                 txtSismograma.Text = $"[Error al mostrar sismograma]: {ex.Message}";
             }
         }
-
-
 
         public void opcionMostrarMapa()
         {
@@ -279,7 +288,6 @@ namespace PPAI_Revisiones.Boundary
             txtSismograma.Clear();
             lblMapa.Text = "";
 
-            // Limpiar imagen y estados de visualización
             if (picSismograma.Image != null)
             {
                 var old = picSismograma.Image;
@@ -307,10 +315,6 @@ namespace PPAI_Revisiones.Boundary
             TomarSelecOpcionAccion();
         }
 
-        // El método TomarSelecOpcionAccion(int opcion) se ha eliminado o renombrado en favor
-        // del que no recibe parámetros si la lógica es obtener el índice del ComboBox. 
-        // He mantenido la versión sin parámetros y he corregido la llamada en btnConfirmar_Click.
-
         private void btnCancelar_Click(object sender, EventArgs e)
         {
             manejador.ReiniciarCU(this);
@@ -331,5 +335,4 @@ namespace PPAI_Revisiones.Boundary
         public bool SeleccionoModificarOrigen => rbtnModOrigenSi.Checked;
         public bool SeleccionoVisualizarMapa => rbtnMapaSi.Checked;
     }
-
 }

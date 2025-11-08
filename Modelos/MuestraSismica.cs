@@ -1,19 +1,25 @@
+// Modelos/MuestraSismica.cs
 using System;
 using System.Collections.Generic;
 using System.Text;
-using PPAI_Revisiones.Modelos;
 
-namespace PPAI_Revisiones.Dominio
+namespace PPAI_Revisiones.Modelos
 {
     public class MuestraSismica
     {
-        public DateTime FechaHoraMuestra { get; set; }
-        public List<PPAI_Revisiones.Modelos.DetalleMuestraSismica> DetalleMuestraSismica { get; set; } = new();
+        // === Atributos de dominio ===
+        public DateTime FechaHoraMuestra { get; private set; }
+        public List<DetalleMuestraSismica> Detalles { get; private set; } = new();
 
+        // === Comportamiento del dominio ===
         public string GetDatos()
         {
             var sb = new StringBuilder();
-            var detalles = DetalleMuestraSismica ?? new List<PPAI_Revisiones.Modelos.DetalleMuestraSismica>();
+            sb.AppendLine($"    Fecha: {FechaHoraMuestra:yyyy-MM-dd HH:mm:ss}");
+
+            var detalles = Detalles ?? new List<DetalleMuestraSismica>();
+            sb.AppendLine($"    Detalles en esta muestra: {detalles.Count}");
+
             if (detalles.Count == 0)
             {
                 sb.AppendLine("      (sin detalles)");
@@ -22,11 +28,21 @@ namespace PPAI_Revisiones.Dominio
 
             foreach (var d in detalles)
             {
-                var nombreTipo = d.TipoDeDato?.GetDatos() ?? "(tipo)";
-                var um = d.TipoDeDato?.NombreUnidadMedida ?? "";
-                sb.AppendLine($"      {nombreTipo,-15}: {d.Valor:0.###} {um}");
+                var tipo = d.TipoDeDato?.GetDatos() ?? "(tipo desconocido)";
+                var unidad = d.TipoDeDato?.NombreUnidadMedida ?? "";
+                sb.AppendLine($"      {tipo}: {d.Valor:0.######} {unidad}");
             }
+
             return sb.ToString();
         }
+
+        // === Constructores ===
+        public MuestraSismica(DateTime fechaHoraMuestra, List<DetalleMuestraSismica> detalles)
+        {
+            FechaHoraMuestra = fechaHoraMuestra;
+            Detalles = detalles ?? new List<DetalleMuestraSismica>();
+        }
+
+        protected MuestraSismica() { }
     }
 }

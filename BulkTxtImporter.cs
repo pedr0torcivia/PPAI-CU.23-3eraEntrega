@@ -1,4 +1,4 @@
-﻿// Infra/Data/BulkTxtImporter.cs
+﻿// Infra/Data/BulkTxtImporter.cs (ADAPTADO)
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using PPAI_2.Infra.Data;
 using PPAI_2.Infra.Data.EFModels;
 
+// La clase es interna static para no tener que usar un using en PantallaNuevaRevision
 internal static class BulkTxtImporter
 {
     // ======= CONFIG =======
@@ -159,6 +160,7 @@ internal static class BulkTxtImporter
     {
         if (!File.Exists(file)) return;
         // Formato mínimo esperado: Id;CodigoEstacion;Nombre;Latitud;Longitud
+        // Columnas 5, 6, 7 son opcionales
         var rows = ReadRows(file, 5);
         var nuevos = new List<EstacionSismologicaEF>();
         var existentes = ctx.Set<EstacionSismologicaEF>().AsNoTracking()
@@ -198,7 +200,7 @@ internal static class BulkTxtImporter
         // Resolución por CodigoEstacion
         var codigo2EstacionId = ctx.Set<EstacionSismologicaEF>().AsNoTracking()
             .Where(e => e.CodigoEstacion != null)
-            .ToDictionary(e => e.CodigoEstacion!, e => (Guid?)e.Id);
+            .ToDictionary(e => e.CodigoEstacion!, e => e.Id);
 
         var existentes = ctx.Set<SismografoEF>().AsNoTracking()
             .ToDictionary(x => x.Id, _ => true);
@@ -209,7 +211,11 @@ internal static class BulkTxtImporter
             if (existentes.ContainsKey(id)) continue;
 
             var codigoEst = Safe(r, 4);
-            codigo2EstacionId.TryGetValue(codigoEst, out var estacionId);
+            if (!codigo2EstacionId.TryGetValue(codigoEst, out var estacionId))
+            {
+                Debug.WriteLine($"[SISM] SKIP: Estación inexistente para código '{codigoEst}'");
+                continue; // ADAPTACIÓN: evitar Guid.Empty en FK
+            }
 
             nuevos.Add(new SismografoEF
             {
@@ -241,7 +247,7 @@ internal static class BulkTxtImporter
             {
                 Id = id,
                 NombreUsuario = Nz(r[1]),
-                Contraseña = Nz(r[2])
+                Contrasenia = Nz(r[2]) // header puede venir como "Contraseña"
             });
         }
         BulkInsertIfAny(ctx, nuevos);
@@ -254,8 +260,9 @@ internal static class BulkTxtImporter
         var rows = ReadRows(file, 1);
         var nuevos = new List<EmpleadoEF>();
 
-        var usuarios = ctx.Set<UsuarioEF>().AsNoTracking()
-            .ToDictionary(u => u.Id, u => u);
+        var usuariosId = ctx.Set<UsuarioEF>().AsNoTracking()
+            .Select(u => u.Id)
+            .ToHashSet();
 
         var existentes = ctx.Set<EmpleadoEF>().AsNoTracking()
             .ToDictionary(x => x.Id, _ => true);
@@ -268,7 +275,7 @@ internal static class BulkTxtImporter
             Guid? usuarioId = null;
             var uTxt = Safe(r, 5);
             var uid = ParseGuid(uTxt);
-            if (uid != Guid.Empty && usuarios.ContainsKey(uid)) usuarioId = uid;
+            if (uid != Guid.Empty && usuariosId.Contains(uid)) usuarioId = uid;
 
             nuevos.Add(new EmpleadoEF
             {
@@ -295,27 +302,20 @@ internal static class BulkTxtImporter
 
         // Diccionarios normalizados (trim + lower)
         var alcanceByNombre = ctx.Set<AlcanceSismoEF>().AsNoTracking()
-            .Where(a => a.Nombre != null)
-            .AsEnumerable()
-            .GroupBy(a => a.Nombre!.Trim().ToLowerInvariant())
+            .Where(a => a.Nombre != null).AsEnumerable().GroupBy(a => a.Nombre!.Trim().ToLowerInvariant())
             .ToDictionary(g => g.Key, g => g.First().Id);
 
         var clasifByNombre = ctx.Set<ClasificacionSismoEF>().AsNoTracking()
-            .Where(c => c.Nombre != null)
-            .AsEnumerable()
-            .GroupBy(c => c.Nombre!.Trim().ToLowerInvariant())
+            .Where(c => c.Nombre != null).AsEnumerable().GroupBy(c => c.Nombre!.Trim().ToLowerInvariant())
             .ToDictionary(g => g.Key, g => g.First().Id);
 
         var origenByNombre = ctx.Set<OrigenDeGeneracionEF>().AsNoTracking()
-            .Where(o => o.Nombre != null)
-            .AsEnumerable()
-            .GroupBy(o => o.Nombre!.Trim().ToLowerInvariant())
+            .Where(o => o.Nombre != null).AsEnumerable().GroupBy(o => o.Nombre!.Trim().ToLowerInvariant())
             .ToDictionary(g => g.Key, g => g.First().Id);
 
+        // Empleados solo referencia (no se usa ResponsableId en EventoSismicoEF)
         var empleadoByMail = ctx.Set<EmpleadoEF>().AsNoTracking()
-            .Where(e => e.Mail != null)
-            .AsEnumerable()
-            .GroupBy(e => e.Mail!.Trim().ToLowerInvariant())
+            .Where(e => e.Mail != null).AsEnumerable().GroupBy(e => e.Mail!.Trim().ToLowerInvariant())
             .ToDictionary(g => g.Key, g => g.First().Id);
 
         var existentes = ctx.Set<EventoSismicoEF>().AsNoTracking()
@@ -343,13 +343,15 @@ internal static class BulkTxtImporter
             if (!alcanceByNombre.TryGetValue(alcanceNombre, out var alcanceId)) { skipAlc++; Debug.WriteLine($"[EV] SKIP Alcance no encontrado: '{r[9]}'"); continue; }
             if (!clasifByNombre.TryGetValue(clasifNombre, out var clasifId)) { skipCla++; Debug.WriteLine($"[EV] SKIP Clasificación no encontrada: '{r[10]}'"); continue; }
             if (!origenByNombre.TryGetValue(origenNombre, out var origenId)) { skipOri++; Debug.WriteLine($"[EV] SKIP Origen no encontrado: '{r[11]}'"); continue; }
-            if (!empleadoByMail.TryGetValue(responsableMl, out var responsableId)) { skipResp++; Debug.WriteLine($"[EV] SKIP ResponsableMail no encontrado: '{r[12]}'"); continue; }
+
+            if (!empleadoByMail.ContainsKey(responsableMl) && !string.IsNullOrWhiteSpace(responsableMl)) { skipResp++; Debug.WriteLine($"[EV] ResponsableMail no encontrado: '{r[12]}'"); }
 
             nuevos.Add(new EventoSismicoEF
             {
                 Id = id,
-                FechaHoraInicio = ParseDate(r[1]) ?? DateTime.MinValue,
-                FechaHoraDeteccion = ParseDate(r[2]) ?? ParseDate(r[1]) ?? DateTime.MinValue,
+                // Tomamos FechaHoraDeteccion si existe, o FechaHoraInicio
+                FechaHoraOcurrencia = ParseDate(r[2]) ?? ParseDate(r[1]) ?? DateTime.MinValue,
+                FechaHoraFin = null,
                 LatitudEpicentro = ParseDouble(r[3]),
                 LongitudEpicentro = ParseDouble(r[4]),
                 LatitudHipocentro = ParseDouble(r[5]),
@@ -358,8 +360,7 @@ internal static class BulkTxtImporter
                 EstadoActualNombre = Nz(r[8], "Autodetectado"),
                 AlcanceId = alcanceId,
                 ClasificacionId = clasifId,
-                OrigenId = origenId,
-                ResponsableId = responsableId
+                OrigenId = origenId
             });
             ok++;
         }
@@ -383,9 +384,7 @@ internal static class BulkTxtImporter
         if (!File.Exists(file)) return;
 
         var empleadoByMail = ctx.Set<EmpleadoEF>().AsNoTracking()
-            .Where(e => e.Mail != null)
-            .AsEnumerable()
-            .GroupBy(e => e.Mail!.Trim().ToLowerInvariant())
+            .Where(e => e.Mail != null).AsEnumerable().GroupBy(e => e.Mail!.Trim().ToLowerInvariant())
             .ToDictionary(g => g.Key, g => g.First().Id);
 
         var eventoExists = ctx.Set<EventoSismicoEF>().AsNoTracking()
@@ -395,7 +394,7 @@ internal static class BulkTxtImporter
             .ToDictionary(c => c.Id, _ => true);
 
         // Id;EventoSismicoId;EstadoNombre;FechaHoraInicio;FechaHoraFin;ResponsableMail
-        var rows = ReadRows(file, 2);
+        var rows = ReadRows(file, 6);
         var nuevos = new List<CambioDeEstadoEF>();
 
         int total = 0, ok = 0, dup = 0, skipEv = 0;
@@ -420,7 +419,7 @@ internal static class BulkTxtImporter
                 Id = id,
                 EventoSismicoId = eventoId,
                 EstadoNombre = Nz(Safe(r, 2), "Autodetectado"),
-                FechaHoraInicio = ParseDate(Safe(r, 3)),
+                FechaHoraInicio = ParseDate(Safe(r, 3)) ?? DateTime.MinValue,
                 FechaHoraFin = ParseDate(Safe(r, 4)),
                 ResponsableId = responsableId
             });
@@ -463,10 +462,18 @@ internal static class BulkTxtImporter
             if (existentes.ContainsKey(id)) continue;
 
             var sismId = ParseGuid(Safe(r, 5));
-            Guid? sismografoId = sismografos.ContainsKey(sismId) ? sismId : (Guid?)null;
+            if (!sismografos.ContainsKey(sismId))
+            {
+                Debug.WriteLine($"[SERIE] SKIP: Sismógrafo inexistente {Safe(r, 5)}");
+                continue;
+            }
 
             var evId = ParseGuid(Safe(r, 6));
-            Guid? eventoId = eventoExists.ContainsKey(evId) ? evId : (Guid?)null;
+            if (!eventoExists.ContainsKey(evId))
+            {
+                Debug.WriteLine($"[SERIE] SKIP: Evento inexistente {Safe(r, 6)}");
+                continue; // ADAPTACIÓN: evitar Guid.Empty en FK
+            }
 
             nuevos.Add(new SerieTemporalEF
             {
@@ -475,8 +482,8 @@ internal static class BulkTxtImporter
                 FechaHoraInicioRegistroMuestras = ParseDate(r[2]) ?? DateTime.MinValue,
                 FechaHoraRegistro = ParseDate(r[3]) ?? DateTime.MinValue,
                 FrecuenciaMuestreo = ParseDouble(r[4]),
-                SismografoId = sismografoId,
-                EventoSismicoId = eventoId
+                SismografoId = sismId,
+                EventoSismicoId = evId
             });
         }
 
@@ -522,14 +529,12 @@ internal static class BulkTxtImporter
     {
         if (!File.Exists(file)) return;
 
-        // 1) Cargamos todas las líneas y saltamos SOLAMENTE el encabezado real (1ra línea).
         var rawLines = File.ReadAllLines(file)
                            .Select(l => l?.Trim())
                            .Where(l => !string.IsNullOrWhiteSpace(l))
                            .ToList();
         if (rawLines.Count == 0) return;
 
-        // Si la primera línea parece encabezado (empieza por "Id;"), la salto.
         if (rawLines[0].StartsWith("Id;", StringComparison.OrdinalIgnoreCase))
             rawLines.RemoveAt(0);
 
@@ -538,16 +543,13 @@ internal static class BulkTxtImporter
             .ToDictionary(m => m.Id, _ => true);
 
         var tipoByDen = ctx.Set<TipoDeDatoEF>().AsNoTracking()
-            .Where(t => t.Denominacion != null)
-            .AsEnumerable()
-            .GroupBy(t => t.Denominacion!.Trim().ToLowerInvariant())
+            .Where(t => t.Denominacion != null).AsEnumerable().GroupBy(t => t.Denominacion!.Trim().ToLowerInvariant())
             .ToDictionary(g => g.Key, g => g.First().Id);
 
-        var existentes = ctx.Set<DetalleMuestraEF>().AsNoTracking()
+        var existentes = ctx.Set<DetalleMuestraSismicaEF>().AsNoTracking()
             .ToDictionary(d => d.Id, _ => true);
 
-        // 3) Parseo e inserción
-        var nuevos = new List<DetalleMuestraEF>();
+        var nuevos = new List<DetalleMuestraSismicaEF>();
         int total = 0, ok = 0, skipFkMuestra = 0, skipTipo = 0, dup = 0, parse = 0;
 
         foreach (var line in rawLines)
@@ -578,7 +580,7 @@ internal static class BulkTxtImporter
 
             double valor = ParseDouble(r[3]);
 
-            nuevos.Add(new DetalleMuestraEF
+            nuevos.Add(new DetalleMuestraSismicaEF
             {
                 Id = id,
                 MuestraSismicaId = muestraId,
@@ -590,13 +592,12 @@ internal static class BulkTxtImporter
 
         if (nuevos.Count > 0)
         {
-            ctx.Set<DetalleMuestraEF>().AddRange(nuevos);
+            ctx.Set<DetalleMuestraSismicaEF>().AddRange(nuevos);
             ctx.SaveChanges();
         }
 
         Debug.WriteLine($"[DETALLE] filas={total}, ok={ok}, dup={dup}, parseErr={parse}, skipMuestra={skipFkMuestra}, skipTipo={skipTipo}");
 
-        // Verificación visible (podés quitarlo cuando termines de depurar)
         System.Windows.Forms.MessageBox.Show(
             $"DETALLES importados: {ok}\n" +
             $"dup={dup} | parseErr={parse} | skipMuestra={skipFkMuestra} | skipTipo={skipTipo}",
@@ -644,23 +645,22 @@ internal static class BulkTxtImporter
         // normaliza
         var norm = cols.Select(c => (c ?? "").Trim().ToLowerInvariant()).ToArray();
 
-        // columnas típicas que SI podemos considerar como encabezado (exact match)
+        // columnas típicas (se amplió para “contraseña”, “condicionalarma”)
         var known = new HashSet<string>(new[]
         {
             "id","nombre","descripcion","fecha","fechahorainicio","fechahoradeteccion",
             "latitud","longitud","valor","muestrasismicaid","tipodedatodenominacion",
             "frecuenciamuestreo","estadonombre","eventoid","responsablemail",
-            "serietemporalid","fechahoramuestra","codigoestacion","nombreunidadmedida"
+            "serietemporalid","fechahoramuestra","codigoestacion","nombreunidadmedida",
+            "contraseña","condicionalarma","nombreusuario"
         });
 
-        // si TODAS las columnas NO parecen guids/fechas/numéricas
         bool noneLooksLikeData = norm.All(s =>
             !Guid.TryParse(s, out _) &&
             !DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out _) &&
             !double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out _)
         );
 
-        // y ALGUNA columna coincide EXACTAMENTE con nombres típicos
         bool hasKnownNames = norm.Any(s => known.Contains(s));
 
         return noneLooksLikeData && hasKnownNames;

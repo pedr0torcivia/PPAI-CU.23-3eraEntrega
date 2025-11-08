@@ -2,10 +2,6 @@
 using System;
 using System.Collections.Generic;
 
-// Alias
-using M = PPAI_Revisiones.Modelos;   // EventoSismico, CambioDeEstado
-using D = PPAI_Revisiones.Dominio;   // Empleado
-
 namespace PPAI_Revisiones.Modelos.Estados
 {
     public sealed class Autodetectado : Estado
@@ -14,34 +10,28 @@ namespace PPAI_Revisiones.Modelos.Estados
         public override bool EsAutodetectado => true;
 
         public override void registrarEstadoBloqueado(
-            M.EventoSismico ctx,
-            List<M.CambioDeEstado> cambiosEstado,
+            EventoSismico ctx,
+            List<CambioDeEstado> cambiosEstado,
             DateTime fechaHoraActual,
-            D.Empleado responsable)
+            Empleado responsable)
         {
-            // 1️⃣ Buscar y cerrar cambio abierto (si existe)
+            // 1) Cerrar cambio abierto (si lo hay)
             var abierto = BuscarCambioAbierto(cambiosEstado);
             if (abierto != null && !abierto.FechaHoraFin.HasValue)
                 abierto.SetFechaHoraFin(fechaHoraActual);
 
-            // 2️⃣ Crear nuevo estado Bloqueado
+            // 2) Nuevo estado destino
             var nuevoEstado = new Bloqueado();
 
-            // 3️⃣ Crear CE y agregarlo
-            var ce = new M.CambioDeEstado
-            {
-                EstadoActual = nuevoEstado,
-                FechaHoraInicio = fechaHoraActual,
-                FechaHoraFin = null,
-                Responsable = responsable
-            };
+            // 3) Crear CE de dominio (sin IDs/FKs técnicas)
+            var ce = CambioDeEstado.Crear(fechaHoraActual, nuevoEstado, responsable);
             cambiosEstado.Add(ce);
 
-            // 4️⃣ Actualizar estado del evento
+            // 4) Actualizar estado del evento (dominio persiste el nombre)
             ctx.SetEstado(nuevoEstado);
         }
 
-        private static M.CambioDeEstado BuscarCambioAbierto(List<M.CambioDeEstado> cambios)
+        private static CambioDeEstado BuscarCambioAbierto(List<CambioDeEstado> cambios)
             => cambios?.Find(c => c.EsEstadoActual());
     }
 }

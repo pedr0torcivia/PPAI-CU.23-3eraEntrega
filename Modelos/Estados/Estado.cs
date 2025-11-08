@@ -1,15 +1,11 @@
 ﻿// PPAI_Revisiones.Modelos.Estados/Estado.cs
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations.Schema;
-
-// Alias para referenciar bien los tipos donde realmente viven
-using M = PPAI_Revisiones.Modelos;   // EventoSismico, CambioDeEstado
-using D = PPAI_Revisiones.Dominio;   // Empleado
+using PPAI_Revisiones.Modelos;
 
 namespace PPAI_Revisiones.Modelos.Estados
 {
-    [NotMapped] // <- CLAVE: EF no intentará mapear esta jerarquía
+    // Jerarquía de dominio puro (no es entidad EF, no se mapea)
     public abstract class Estado
     {
         public abstract string Nombre { get; }
@@ -18,30 +14,32 @@ namespace PPAI_Revisiones.Modelos.Estados
         public virtual bool EsAutodetectado => false;
         public virtual bool EsEventoSinRevision => false;
 
-        // === NO CAMBIO DE FIRMAS (solo califiqué los tipos con alias M/D) ===
         public virtual void registrarEstadoBloqueado(
-            M.EventoSismico ctx,
-            List<M.CambioDeEstado> cambiosEstado,
-            DateTime fechaHoraActual,
-            D.Empleado responsable)
+            EventoSismico ctx, List<CambioDeEstado> cambiosEstado,
+            DateTime fechaHoraActual, Empleado responsable)
             => LanzarInvalida(nameof(registrarEstadoBloqueado));
 
         public virtual void rechazar(
-            List<M.CambioDeEstado> cambiosEstado,
-            M.EventoSismico es,
-            DateTime fechaHoraActual,
-            D.Empleado responsable)
+            List<CambioDeEstado> cambiosEstado, EventoSismico ctx,
+            DateTime fechaHoraActual, Empleado responsable)
             => LanzarInvalida(nameof(rechazar));
 
         protected static void LanzarInvalida(string transicion)
             => throw new InvalidOperationException($"Transición '{transicion}' no válida para el estado actual.");
 
+        // Materialización desde nombre persistido
         public static Estado FromName(string nombre) => nombre switch
         {
             "Autodetectado" => new Autodetectado(),
             "Bloqueado" => new Bloqueado(),
             "Rechazado" => new Rechazado(),
             "Confirmado" => new Confirmado(),
+            "Autoconfirmado" => new Autoconfirmado(),
+            "Evento sin revisión" => new EventoSinRevision(),
+            "PendienteDeCierre" => new PendienteDeCierre(),
+            "PendienteDeRevision" => new PendienteDeRevision(),
+            "Cerrado" => new Cerrado(),
+            "Derivado" => new Derivado(),
             _ => null
         };
     }

@@ -1,31 +1,44 @@
-﻿using PPAI_Revisiones.Dominio;
-using PPAI_Revisiones.Modelos.Estados;
+﻿// Modelos/CambioDeEstado.cs
 using System;
+using PPAI_Revisiones.Modelos.Estados;
 
 namespace PPAI_Revisiones.Modelos
 {
     public class CambioDeEstado
     {
-        // === Atributos del dominio que pediste ===
-        public DateTime? FechaHoraFin { get; set; }
+        // === Atributos de dominio (según tu lista) ===
         public DateTime? FechaHoraInicio { get; set; }
-        public Estado EstadoActual { get; set; }            // 1..1 (State en memoria)
-        public Empleado Responsable { get; set; }           // ← el CU usa .Responsable
+        public DateTime? FechaHoraFin { get; set; }
+        public Estado EstadoActual { get; set; }              // (1.)
+        public Empleado ResponsableInspeccion { get; set; }   // (1.) hacia Empleado
 
-        // === Shims de compatibilidad usados por el CU ===
-        public string EstadoNombre => EstadoActual?.Nombre; // el CU lo lee para mensajes
-
-        // === Métodos existentes (no se tocan) ===
+        // === Comportamiento de dominio ===
         public bool EsEstadoActual() => !FechaHoraFin.HasValue;
-        public void SetFechaHoraFin(DateTime fecha) => FechaHoraFin = fecha;
+        public string GetEstadoNombre() => EstadoActual?.Nombre ?? throw new InvalidOperationException("EstadoActual no puede ser nulo.");
 
+        public void SetFechaHoraFin(DateTime fin)
+        {
+            if (fin < FechaHoraInicio)
+                throw new ArgumentException("La fecha de fin no puede ser anterior al inicio.", nameof(fin));
+            FechaHoraFin = fin;
+        }
+
+        // Fábrica de creación coherente con el dominio
         public static CambioDeEstado Crear(DateTime inicio, Estado estado, Empleado responsable)
-            => new CambioDeEstado
+        {
+            if (estado == null) throw new ArgumentNullException(nameof(estado));
+            if (responsable == null) throw new ArgumentNullException(nameof(responsable));
+
+            return new CambioDeEstado
             {
-                EstadoActual = estado,
-                Responsable = responsable,
                 FechaHoraInicio = inicio,
-                FechaHoraFin = null
+                FechaHoraFin = null,
+                EstadoActual = estado,
+                ResponsableInspeccion = responsable
             };
+        }
+
+        // Constructor protegido para frameworks/serialización si hiciera falta
+        protected CambioDeEstado() { }
     }
 }

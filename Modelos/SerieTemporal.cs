@@ -1,48 +1,63 @@
+// Modelos/SerieTemporal.cs
 using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.Text;
 
-namespace PPAI_Revisiones.Dominio
+namespace PPAI_Revisiones.Modelos
 {
     public class SerieTemporal
     {
-        public bool CondicionAlarma { get; set; }
-        public DateTime FechaHoraInicioRegistroMuestras { get; set; }
-        public DateTime FechaHoraRegistro { get; set; }
-        public double FrecuenciaMuestreo { get; set; }
-        public List<MuestraSismica> MuestrasSismicas { get; set; } = new();
-        public Sismografo Sismografo { get; set; }
+        // === Atributos de dominio (según tu lista) ===
+        public bool CondicionAlarma { get; private set; }
+        public DateTime FechaHoraInicioRegistroMuestras { get; private set; }
+        public DateTime FechaHoraRegistro { get; private set; }
+        public double FrecuenciaMuestreo { get; private set; }
+        public List<MuestraSismica> Muestras { get; private set; } = new();
 
+        // === Comportamiento de dominio (sin dependencias técnicas) ===
         public string GetSeries()
         {
-            var muestras = (MuestrasSismicas ?? new List<MuestraSismica>())
-                           .OrderBy(x => x.FechaHoraMuestra)
-                           .ToList();
+            var sb = new StringBuilder();
 
-            string nombreEstacion = Sismografo?.GetNombreEstacion() ?? "(sin estación)";
-            var sb = new System.Text.StringBuilder();
+            var ordenadas = (Muestras ?? new List<MuestraSismica>());
+            ordenadas.Sort((a, b) => a.FechaHoraMuestra.CompareTo(b.FechaHoraMuestra));
 
-            sb.AppendLine($"Estación: {nombreEstacion}");
-            sb.AppendLine($"  Frecuencia muestreo: {FrecuenciaMuestreo:0.##} Hz");
-            sb.AppendLine($"  Inicio registro     : {FechaHoraInicioRegistroMuestras:dd/MM/yyyy HH:mm:ss}");
-            sb.AppendLine($"  Último registro     : {FechaHoraRegistro:dd/MM/yyyy HH:mm:ss}");
-            sb.AppendLine($"  Condición de alarma : {(CondicionAlarma ? "Sí" : "No")}");
+            sb.AppendLine($"[Serie] Frecuencia: {FrecuenciaMuestreo} Hz | " +
+                          $"Desde: {FechaHoraInicioRegistroMuestras:yyyy-MM-dd HH:mm:ss} | " +
+                          $"Ult. Registro: {FechaHoraRegistro:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine($"Muestras: {ordenadas.Count}");
 
-            if (muestras.Count == 0)
+            if (ordenadas.Count == 0)
             {
                 sb.AppendLine("  (sin muestras)");
-                sb.AppendLine();
                 return sb.ToString();
             }
 
-            int n = 1;
-            foreach (var m in muestras)
+            int i = 1;
+            foreach (var muestra in ordenadas)
             {
-                sb.AppendLine($"  • Muestra #{n++}  ({m.FechaHoraMuestra:dd/MM/yyyy HH:mm:ss})");
-                sb.Append(m.GetDatos());
+                sb.AppendLine($"\n  • Muestra #{i++}");
+                sb.Append(muestra.GetDatos());
             }
-            sb.AppendLine();
+
             return sb.ToString();
         }
+
+        // === Constructores ===
+        public SerieTemporal(
+            bool condicionAlarma,
+            DateTime fechaHoraInicioRegistroMuestras,
+            DateTime fechaHoraRegistro,
+            double frecuenciaMuestreo,
+            List<MuestraSismica> muestras)
+        {
+            CondicionAlarma = condicionAlarma;
+            FechaHoraInicioRegistroMuestras = fechaHoraInicioRegistroMuestras;
+            FechaHoraRegistro = fechaHoraRegistro;
+            FrecuenciaMuestreo = frecuenciaMuestreo;
+            Muestras = muestras ?? new List<MuestraSismica>();
+        }
+
+        protected SerieTemporal() { }
     }
 }

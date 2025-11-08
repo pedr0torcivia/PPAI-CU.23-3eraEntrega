@@ -1,6 +1,4 @@
-using Microsoft.EntityFrameworkCore;
 using PPAI_2.Infra.Data;
-using PPAI_2.Infra.Repos;
 using PPAI_Revisiones.Boundary;
 using PPAI_Revisiones.Modelos;
 using PPAI_Revisiones.Modelos.Estados;
@@ -9,17 +7,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Forms;
 
-// Alias dominio (Empleado vive en Dominio)
-using D = PPAI_Revisiones.Dominio;
 
 namespace PPAI_Revisiones.Controladores
 {
     public class ManejadorRegistrarRespuesta
     {
-        // Infra (EF)
+        // ==== Dependencias (solo a través del repo; nunca tocamos EF acá) ====
         private readonly RedSismicaContext _ctx;
         private readonly IEventoRepository _repo;
-        private Guid? _responsableIdEf;
 
         // === Variables de control del CU ===
         private List<EventoSismico> eventosAutodetectadosNoRevisados;
@@ -27,26 +22,29 @@ namespace PPAI_Revisiones.Controladores
         private EventoSismico eventoBloqueadoTemporal;
 
         private DateTime fechaHoraActual;
-        private D.Empleado responsable;
-
+        private Empleado responsable;
         private string detallesEvento;
 
-        public ManejadorRegistrarRespuesta()
+        public ManejadorRegistrarRespuesta(RedSismicaContext ctx, IEventoRepository repo)
         {
-            _ctx = new RedSismicaContext();
-            _repo = new EventoRepositoryEF(_ctx);
+            _ctx = ctx ?? throw new ArgumentNullException(nameof(ctx));
+            _repo = repo ?? throw new ArgumentNullException(nameof(repo));
         }
 
         // ================== FLUJO PRINCIPAL ==================
         public List<object> RegistrarNuevaRevision(PantallaNuevaRevision pantalla)
         {
+            // 1) Buscar candidatos (Autodetectados / sin revisión)
             eventosAutodetectadosNoRevisados = BuscarEventosAutoDetecNoRev();
+
+            // 2) Ordenar por fecha de ocurrencia (desc)
             OrdenarEventos();
 
+            // 3) Proyección SOLO para la grilla
             var listaProyectada = eventosAutodetectadosNoRevisados
                 .Select(e => new
                 {
-                    e.FechaHoraInicio,
+                    e.FechaHoraOcurrencia,
                     e.LatitudEpicentro,
                     e.LongitudEpicentro,
                     e.LatitudHipocentro,
@@ -64,13 +62,20 @@ namespace PPAI_Revisiones.Controladores
         private List<EventoSismico> BuscarEventosAutoDetecNoRev()
         {
             var todos = _repo.GetEventosParaRevision().ToList();
+
             var resultado = new List<EventoSismico>();
             foreach (var e in todos)
             {
+                // materializa estado actual + estados de cambios (dominio)
                 e.MaterializarEstadoDesdeNombre();
                 e.MaterializarEstadosDeCambios();
+
                 if (e.sosAutodetectado() || e.sosEventoSinRevision())
+                {
+                    // Logging útil en consola
+                    Console.WriteLine($"[EventoSismico] {e.GetDatosOcurrencia()}");
                     resultado.Add(e);
+                }
             }
             return resultado;
         }
@@ -78,7 +83,7 @@ namespace PPAI_Revisiones.Controladores
         private void OrdenarEventos()
         {
             eventosAutodetectadosNoRevisados = eventosAutodetectadosNoRevisados
-                .OrderByDescending(e => e.FechaHoraInicio)
+                .OrderByDescending(e => e.FechaHoraOcurrencia)
                 .ToList();
         }
 
@@ -87,20 +92,18 @@ namespace PPAI_Revisiones.Controladores
         {
             var nuevoEvento = eventosAutodetectadosNoRevisados[indice];
 
-            // Revertir bloqueo temporal del anterior (si existía)
+            // Si había otro bloqueado temporal, revertir
             if (eventoBloqueadoTemporal != null && eventoBloqueadoTemporal != nuevoEvento)
                 RevertirBloqueo(eventoBloqueadoTemporal);
 
-            _ctx.ChangeTracker.Clear();
-
-            // cargar completo y trackeado via repo (mapea a dominio)
-            eventoSeleccionado = _repo.GetEventoConSeriesYDetalles(nuevoEvento.Id);
+            // Cargar el seleccionado con series y detalles (desde repo, por coincidencia de atributos)
+            eventoSeleccionado = _repo.GetEventoConSeriesYDetalles(nuevoEvento);
             eventoBloqueadoTemporal = eventoSeleccionado;
 
-            // Autodetectado → Bloqueado
+            // Autodetectado → Bloqueado (State en dominio)
             ActualizarEventoBloqueado();
 
-            // Refiltrar y repintar
+            // Refrescar grilla
             ReaplicarFiltroYPintar(pantalla);
             pantalla.MostrarMensaje("El evento ha sido BLOQUEADO para su revisión.");
 
@@ -110,6 +113,7 @@ namespace PPAI_Revisiones.Controladores
             pantalla.MostrarDetalleEventoSismico(detallesEvento);
             pantalla.MostrarSismograma(sismograma);
 
+            // UI siguiente paso
             HabilitarOpcionVisualizarMapa(pantalla);
         }
 
@@ -118,51 +122,39 @@ namespace PPAI_Revisiones.Controladores
             responsable = BuscarUsuarioLogueado();
             fechaHoraActual = GetFechaHora();
 
-            // State del dominio: agrega CE (sin PK/FK) y setea el nombre
+            // Delegación al dominio (State)
             eventoSeleccionado.RegistrarEstadoBloqueado(fechaHoraActual, responsable);
 
-            // Persistencia: que el repo materialice CE -> EF con PK/FK
-            ((EventoRepositoryEF)_repo).Guardar(eventoSeleccionado, _responsableIdEf);
-
+            // Persistencia delegada al repositorio
+            _repo.GuardarCambiosDeEstado(eventoSeleccionado);
         }
 
-        private D.Empleado BuscarUsuarioLogueado()
-        {
-            var ef = _ctx.Empleados
-                         .AsNoTracking()
-                         .Include(e => e.Usuario)
-                         .FirstOrDefault();
-
-            _responsableIdEf = ef?.Id; // <-- guardamos el Id EF para persistir FK
-            if (ef == null) return null;
-
-            return new D.Empleado
-            {
-                // NO agregamos Id al dominio
-                Nombre = ef.Nombre,
-                Apellido = ef.Apellido,
-                Mail = ef.Mail,
-                Telefono = ef.Telefono
-            };
-        }
+        private Empleado BuscarUsuarioLogueado() => _repo.GetUsuarioLogueado();
 
         private DateTime GetFechaHora() => DateTime.Now;
 
         // ================== DETALLE Y SISMOGRAMA ==================
         private void BuscarDetallesEventoSismico()
         {
-            // solo prepara el string para la pantalla; no mostrar MessageBox ni logs
             detallesEvento = eventoSeleccionado?.GetDetalleEventoSismico() ?? "(Evento nulo)";
+            MessageBox.Show(detallesEvento, "TRACE - Series y Muestras por estación",
+                 MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private string GenerarSismograma()
         {
+            Console.WriteLine("[Manejador] → GenerarSismograma() ejecutado (Extensión CU)");
             var extensionCU = new CU_GenerarSismograma();
             var ruta = extensionCU.Ejecutar();
-            return ruta?.Trim().Trim('"');
+            ruta = ruta?.Trim().Trim('"');
+
+            var exists = System.IO.File.Exists(ruta);
+            Console.WriteLine($"[Manejador] Ruta devuelta por CU: '{ruta}' | Exists={exists}");
+
+            return ruta;
         }
 
-        // ================== OPCIONES UI (Mapa y Modificaciones) ==================
+        // ================== OPCIONES UI ==================
         public void HabilitarOpcionVisualizarMapa(PantallaNuevaRevision pantalla)
         {
             pantalla.opcionMostrarMapa();
@@ -198,7 +190,7 @@ namespace PPAI_Revisiones.Controladores
         // ================== ACCIÓN FINAL (Confirmar / Rechazar / Derivar) ==================
         public void TomarOpcionAccion(int opcion, PantallaNuevaRevision pantalla)
         {
-            if (!ValidarAccion(opcion, pantalla))
+            if (!ValidarAccion(opcion))
             {
                 pantalla.MostrarMensaje("Faltan datos obligatorios o acción inválida.");
                 return;
@@ -206,11 +198,11 @@ namespace PPAI_Revisiones.Controladores
 
             switch (opcion)
             {
-                case 1:
+                case 1: // Confirmar
                     pantalla.MostrarMensaje("Evento confirmado correctamente.");
                     break;
 
-                case 2: // Rechazar
+                case 2: // Rechazar (Bloqueado → Rechazado)
                     if (eventoSeleccionado == null)
                     {
                         pantalla.MostrarMensaje("Error: evento seleccionado nulo.");
@@ -219,7 +211,7 @@ namespace PPAI_Revisiones.Controladores
                     ActualizarEstadoRechazado(pantalla);
                     break;
 
-                case 3:
+                case 3: // Derivar
                     pantalla.MostrarMensaje("Evento derivado a experto.");
                     break;
             }
@@ -227,13 +219,13 @@ namespace PPAI_Revisiones.Controladores
             Console.WriteLine("FinCU()");
         }
 
-        private bool ValidarAccion(int opcion, PantallaNuevaRevision pantalla)
+        private bool ValidarAccion(int opcion)
         {
             if (opcion < 1 || opcion > 3) return false;
             if (eventoSeleccionado == null) return false;
 
             if (eventoSeleccionado.Alcance == null ||
-                eventoSeleccionado.Origen == null ||
+                eventoSeleccionado.OrigenDeGeneracion == null ||
                 eventoSeleccionado.ValorMagnitud <= 0)
                 return false;
 
@@ -250,17 +242,17 @@ namespace PPAI_Revisiones.Controladores
             }
 
             fechaHoraActual = GetFechaHora();
-            responsable ??= BuscarUsuarioLogueado();
+            if (responsable == null)
+                responsable = BuscarUsuarioLogueado();
 
-            // State del dominio
+            // Bloqueado → Rechazado (State en dominio)
             eventoSeleccionado.Rechazar(fechaHoraActual, responsable);
 
-            // Persistencia vía repo (materializa CE → EF)
-            ((EventoRepositoryEF)_repo).Guardar(eventoSeleccionado, _responsableIdEf);
+            // Persistencia y refresco delegados al repo
+            _repo.GuardarCambiosDeEstado(eventoSeleccionado);
+            _repo.Refresh(eventoSeleccionado);
 
-
-            // Traer fresco para mostrar (dominio)
-            eventoSeleccionado = _repo.GetEventoConSeriesYDetalles(eventoSeleccionado.Id);
+            // Rematerializar estados de dominio
             eventoSeleccionado.MaterializarEstadoDesdeNombre();
             eventoSeleccionado.MaterializarEstadosDeCambios();
 
@@ -274,42 +266,14 @@ namespace PPAI_Revisiones.Controladores
         private void RevertirBloqueo(EventoSismico ev)
         {
             if (ev == null) return;
-
-            // Trabajamos con EF directo para revertir una fila reciente
-            var evEf = _ctx.EventosSismicos
-                           .Include(e => e.CambiosDeEstado)
-                           .FirstOrDefault(e => e.Id == ev.Id);
-            if (evEf == null) return;
-
-            var ordenados = evEf.CambiosDeEstado
-                .OrderByDescending(c => c.FechaHoraInicio ?? DateTime.MinValue)
-                .ToList();
-
-            var ultimo = ordenados.FirstOrDefault();
-            var anterior = ordenados.Skip(1).FirstOrDefault();
-
-            // Si el último fue "Bloqueado", lo quitamos
-            if (ultimo != null && string.Equals(ultimo.EstadoNombre, "Bloqueado", StringComparison.OrdinalIgnoreCase))
-            {
-                _ctx.CambiosDeEstado.Remove(ultimo);
-            }
-
-            // Reabrimos el anterior (si estaba cerrado)
-            if (anterior != null && anterior.FechaHoraFin.HasValue)
-            {
-                anterior.FechaHoraFin = null;
-                evEf.EstadoActualNombre = anterior.EstadoNombre;
-            }
-
-            _ctx.SaveChanges();
-            _ctx.ChangeTracker.Clear();
+            _repo.RevertirBloqueo(ev);
         }
 
         // ================== REINICIAR CU ==================
         private List<object> ProyectarParaGrilla(IEnumerable<EventoSismico> src) =>
             src.Select(e => new
             {
-                e.FechaHoraInicio,
+                e.FechaHoraOcurrencia,
                 e.LatitudEpicentro,
                 e.LongitudEpicentro,
                 e.LatitudHipocentro,
@@ -348,12 +312,12 @@ namespace PPAI_Revisiones.Controladores
                 e.MaterializarEstadoDesdeNombre();
                 e.MaterializarEstadosDeCambios();
 
-                if (e.EstadoActualNombre == "Autodetectado" || e.EstadoActualNombre == "Bloqueado")
+                if (e.EstadoActual.Nombre == "Autodetectado" || e.EstadoActual.Nombre == "Bloqueado")
                     candidatos.Add(e);
             }
 
             eventosAutodetectadosNoRevisados = candidatos
-                .OrderByDescending(x => x.FechaHoraInicio)
+                .OrderByDescending(x => x.FechaHoraOcurrencia)
                 .ToList();
 
             var proyeccion = ProyectarParaGrilla(eventosAutodetectadosNoRevisados);
@@ -363,20 +327,19 @@ namespace PPAI_Revisiones.Controladores
         // HELPER PARA Msj
         private void MostrarMensajeCambios(PantallaNuevaRevision pantalla, EventoSismico ev)
         {
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine("Evento rechazado correctamente.\n");
-            sb.AppendLine(ev.GetDetalleEventoSismico());
+            var msg = "Evento rechazado correctamente.\n\n";
+            msg += ev.GetDetalleEventoSismico() + "\n";
+            msg += "CAMBIOS DE ESTADO:\n";
 
-            sb.AppendLine("CAMBIOS DE ESTADO:");
             foreach (var c in ev.CambiosDeEstado.OrderBy(x => x.FechaHoraInicio ?? DateTime.MinValue))
             {
-                var nombre = c.EstadoActual?.Nombre ?? c.EstadoNombre ?? "(sin estado)";
-                var inicio = c.FechaHoraInicio?.ToString("dd/MM/yyyy HH:mm") ?? "(sin inicio)";
-                var fin = c.FechaHoraFin?.ToString("dd/MM/yyyy HH:mm") ?? "(en curso)";
-                var resp = c.Responsable?.Nombre ?? "(desconocido)";
-                sb.AppendLine($"- {nombre,-12}  {inicio} → {fin}  | Responsable: {resp}");
+                var nombre = c.EstadoActual?.Nombre ?? c.GetEstadoNombre() ?? "(sin estado)";
+                var inicio = c.FechaHoraInicio?.ToString("g") ?? "(sin inicio)";
+                var fin = c.FechaHoraFin?.ToString("g") ?? "(en curso)";
+                var resp = c.ResponsableInspeccion?.Nombre ?? "(desconocido)";
+                msg += $"- {nombre}: {inicio} → {fin} | Responsable: {resp}\n";
             }
-            pantalla.MostrarMensaje(sb.ToString());
+            pantalla.MostrarMensaje(msg);
         }
     }
 }

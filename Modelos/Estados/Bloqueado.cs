@@ -2,10 +2,6 @@
 using System;
 using System.Collections.Generic;
 
-// Alias
-using M = PPAI_Revisiones.Modelos;
-using D = PPAI_Revisiones.Dominio;
-
 namespace PPAI_Revisiones.Modelos.Estados
 {
     public sealed class Bloqueado : Estado
@@ -14,28 +10,26 @@ namespace PPAI_Revisiones.Modelos.Estados
         public override bool EsBloqueado => true;
 
         public override void rechazar(
-            List<M.CambioDeEstado> cambiosEstado,
-            M.EventoSismico ctx,
+            List<CambioDeEstado> cambiosEstado,
+            EventoSismico ctx,
             DateTime fechaHoraActual,
-            D.Empleado responsable)
+            Empleado responsable)
         {
+            // 1) Cerrar cambio abierto (si lo hay)
             var abierto = BuscarCambioAbierto(cambiosEstado);
             if (abierto != null && !abierto.FechaHoraFin.HasValue)
                 abierto.SetFechaHoraFin(fechaHoraActual);
 
-            var ce = new M.CambioDeEstado
-            {
-                EstadoActual = new Rechazado(),
-                FechaHoraInicio = fechaHoraActual,
-                FechaHoraFin = null,
-                Responsable = responsable
-            };
+            // 2) Crear CE hacia Rechazado (dominio puro)
+            var estadoDestino = new Rechazado();
+            var ce = CambioDeEstado.Crear(fechaHoraActual, estadoDestino, responsable);
             cambiosEstado.Add(ce);
 
-            ctx.SetEstado(new Rechazado());
+            // 3) Actualizar estado del evento
+            ctx.SetEstado(estadoDestino);
         }
 
-        private static M.CambioDeEstado BuscarCambioAbierto(List<M.CambioDeEstado> cambios)
+        private static CambioDeEstado BuscarCambioAbierto(List<CambioDeEstado> cambios)
             => cambios?.Find(c => c.EsEstadoActual());
     }
 }

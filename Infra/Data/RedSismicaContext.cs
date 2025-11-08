@@ -1,140 +1,145 @@
-﻿// Infra/Data/RedSismicaContext.cs
-using Microsoft.EntityFrameworkCore;
-using PPAI_2.Infra.Data.EFModels;
+﻿using Microsoft.EntityFrameworkCore;
 using System;
-using System.IO;
+using System.Reflection;
+using E = PPAI_2.Infra.Data.EFModels; // Entidades de Infraestructura
+using M = PPAI_Revisiones.Modelos; // Entidades de Dominio (No usadas directamente aquí, pero sí sus configuraciones)
+using Microsoft.EntityFrameworkCore.InMemory;
 
 namespace PPAI_2.Infra.Data
 {
     public class RedSismicaContext : DbContext
     {
-        public DbSet<EventoSismicoEF> EventosSismicos => Set<EventoSismicoEF>();
-        public DbSet<CambioDeEstadoEF> CambiosDeEstado => Set<CambioDeEstadoEF>();
-        public DbSet<SerieTemporalEF> SeriesTemporales => Set<SerieTemporalEF>();
-        public DbSet<MuestraSismicaEF> Muestras => Set<MuestraSismicaEF>();
-        public DbSet<DetalleMuestraEF> DetallesMuestra => Set<DetalleMuestraEF>();
-        public DbSet<SismografoEF> Sismografos => Set<SismografoEF>();
-        public DbSet<EstacionSismologicaEF> Estaciones => Set<EstacionSismologicaEF>();
-        public DbSet<AlcanceSismoEF> Alcances => Set<AlcanceSismoEF>();
-        public DbSet<ClasificacionSismoEF> Clasificaciones => Set<ClasificacionSismoEF>();
-        public DbSet<OrigenDeGeneracionEF> Origenes => Set<OrigenDeGeneracionEF>();
-        public DbSet<TipoDeDatoEF> TiposDeDato => Set<TipoDeDatoEF>();
-        public DbSet<UsuarioEF> Usuarios => Set<UsuarioEF>();
-        public DbSet<EmpleadoEF> Empleados => Set<EmpleadoEF>();
-        public DbSet<MuestraSismicaEF> MuestrasEF => Set<MuestraSismicaEF>();
-        public DbSet<DetalleMuestraEF> DetallesMuestraEF => Set<DetalleMuestraEF>();
-        public DbSet<TipoDeDatoEF> TiposDeDatoEF => Set<TipoDeDatoEF>();
+        public DbSet<E.EmpleadoEF> Empleados { get; set; }
+        public DbSet<E.UsuarioEF> Usuarios { get; set; }
+        public DbSet<E.EventoSismicoEF> EventosSismicos { get; set; }
+        public DbSet<E.CambioDeEstadoEF> CambiosDeEstado { get; set; }
+        public DbSet<E.EstacionSismologicaEF> EstacionesSismologicas { get; set; }
+        public DbSet<E.SismografoEF> Sismografos { get; set; }
+        public DbSet<E.SerieTemporalEF> SeriesTemporales { get; set; }
+        public DbSet<E.MuestraSismicaEF> MuestrasSismicas { get; set; }
+        public DbSet<E.DetalleMuestraSismicaEF> DetallesMuestrasSismicas { get; set; }
+        public DbSet<E.TipoDeDatoEF> TiposDeDatos { get; set; }
 
-
-        protected override void OnConfiguring(DbContextOptionsBuilder options)
+        public RedSismicaContext(DbContextOptions<RedSismicaContext> options) : base(options)
         {
-            var dbPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "redsismica.db");
-            options.UseSqlite($"Data Source={dbPath}");
         }
 
-        protected override void OnModelCreating(ModelBuilder mb)
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            // Tablas y claves
-            mb.Entity<AlcanceSismoEF>().ToTable("Alcances").HasKey(x => x.Id);
-            mb.Entity<ClasificacionSismoEF>().ToTable("Clasificaciones").HasKey(x => x.Id);
-            mb.Entity<OrigenDeGeneracionEF>().ToTable("Origenes").HasKey(x => x.Id);
-            mb.Entity<TipoDeDatoEF>().ToTable("TiposDeDato").HasKey(x => x.Id);
-            mb.Entity<UsuarioEF>().ToTable("Usuarios").HasKey(x => x.Id);
-            mb.Entity<EmpleadoEF>().ToTable("Empleados").HasKey(x => x.Id);
-            mb.Entity<SismografoEF>().ToTable("Sismografos").HasKey(x => x.Id);
-            mb.Entity<EstacionSismologicaEF>().ToTable("Estaciones").HasKey(x => x.Id);
+            modelBuilder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
 
-            mb.Entity<EventoSismicoEF>(e =>
+            // --- Empleado ---
+            modelBuilder.Entity<E.EmpleadoEF>(entity =>
             {
-                e.ToTable("EventosSismicos");
-                e.HasKey(x => x.Id);
-
-                e.HasMany(x => x.CambiosDeEstado)
-                 .WithOne(c => c.Evento)
-                 .HasForeignKey(c => c.EventoSismicoId)
-                 .OnDelete(DeleteBehavior.Cascade);
-
-                e.HasMany(x => x.SeriesTemporales)
-                 .WithOne(s => s.Evento)
-                 .HasForeignKey(s => s.EventoSismicoId)
-                 .OnDelete(DeleteBehavior.Cascade);
-
-                e.HasOne(x => x.Alcance).WithMany().HasForeignKey(x => x.AlcanceId).OnDelete(DeleteBehavior.Restrict);
-                e.HasOne(x => x.Clasificacion).WithMany().HasForeignKey(x => x.ClasificacionId).OnDelete(DeleteBehavior.Restrict);
-                e.HasOne(x => x.Origen).WithMany().HasForeignKey(x => x.OrigenId).OnDelete(DeleteBehavior.Restrict);
-                e.HasOne(x => x.Responsable).WithMany().HasForeignKey(x => x.ResponsableId).OnDelete(DeleteBehavior.Restrict);
-
-                e.HasIndex(x => x.FechaHoraInicio);
+                entity.Property<Guid>("Id").HasColumnName("EmpleadoId");
+                entity.HasKey("Id");
+                entity.Property(e => e.Rol).IsRequired().HasMaxLength(50);
+                entity.Property(e => e.Apellido).IsRequired().HasMaxLength(100);
             });
 
-            mb.Entity<CambioDeEstadoEF>(c =>
+            // --- Usuario ---
+            modelBuilder.Entity<E.UsuarioEF>(entity =>
             {
-                c.ToTable("CambiosDeEstado");
-                c.HasKey(x => x.Id);
-                c.Property(x => x.Id).ValueGeneratedNever();
-
-                c.HasOne(x => x.Responsable)
-                 .WithMany()
-                 .HasForeignKey(x => x.ResponsableId)
-                 .OnDelete(DeleteBehavior.Restrict);
+                entity.Property<Guid>("Id").HasColumnName("UsuarioId");
+                entity.HasKey("Id");
+                entity.Property<Guid>("EmpleadoId");
+                entity.HasOne(u => u.Empleado)
+                      .WithOne()
+                      .HasForeignKey<E.UsuarioEF>("EmpleadoId")
+                      .IsRequired();
             });
 
-            mb.Entity<SerieTemporalEF>(s =>
+            // --- EventoSismico ---
+            modelBuilder.Entity<E.EventoSismicoEF>(entity =>
             {
-                s.ToTable("SeriesTemporales");
-                s.HasKey(x => x.Id);
-
-                s.HasMany(x => x.Muestras)
-                 .WithOne(m => m.SerieTemporal)
-                 .HasForeignKey(m => m.SerieTemporalId)
-                 .OnDelete(DeleteBehavior.Cascade);
-
-                s.HasOne(x => x.Sismografo)
-                 .WithMany()
-                 .HasForeignKey(x => x.SismografoId)
-                 .OnDelete(DeleteBehavior.Restrict);
+                entity.Property<Guid>("Id").HasColumnName("EventoSismicoId");
+                entity.HasKey("Id");
+                entity.HasOne(e => e.Clasificacion).WithMany().IsRequired();
+                entity.HasOne(e => e.Alcance).WithMany().IsRequired();
+                entity.HasOne(e => e.Origen).WithMany().IsRequired();
+                entity.Property(e => e.EstadoActualNombre).IsRequired().HasMaxLength(50);
             });
 
-            mb.Entity<MuestraSismicaEF>(m =>
+            // --- CambioDeEstado ---
+            modelBuilder.Entity<E.CambioDeEstadoEF>(entity =>
             {
-                m.ToTable("MuestrasSismicas");
-                m.HasKey(x => x.Id);
+                entity.Property<Guid>("Id").HasColumnName("CambioDeEstadoId");
+                entity.HasKey("Id");
 
-                m.HasMany(x => x.Detalles)
-                 .WithOne(d => d.Muestra)
-                 .HasForeignKey(d => d.MuestraSismicaId)
-                 .OnDelete(DeleteBehavior.Cascade);
+                // CORRECCIÓN: Usamos el nombre de propiedad de navegación real: .Evento (asumo que es ese)
+                entity.Property<Guid>("EventoSismicoId");
+                entity.HasOne(ce => ce.Evento) // <--- CORRECCIÓN (Era .EventoSismico)
+                      .WithMany(ev => ev.CambiosDeEstado)
+                      .HasForeignKey("EventoSismicoId");
+
+                entity.Property<Guid?>("ResponsableId");
+                entity.HasOne(ce => ce.Responsable)
+                      .WithMany()
+                      .HasForeignKey("ResponsableId")
+                      .IsRequired(false);
             });
 
-            mb.Entity<DetalleMuestraEF>(d =>
+            // --- EstacionSismologica ---
+            modelBuilder.Entity<E.EstacionSismologicaEF>(entity =>
             {
-                d.ToTable("DetallesMuestra");
-                d.HasKey(x => x.Id);
-
-                d.HasOne(x => x.TipoDeDato)
-                 .WithMany()
-                 .HasForeignKey(x => x.TipoDeDatoId)
-                 .OnDelete(DeleteBehavior.Restrict);
+                entity.Property<Guid>("Id").HasColumnName("EstacionSismologicaId");
+                entity.HasKey("Id");
+                entity.HasIndex(e => e.CodigoEstacion).IsUnique();
             });
 
-            mb.Entity<SismografoEF>(s =>
+            // --- Sismografo ---
+            modelBuilder.Entity<E.SismografoEF>(entity =>
             {
-                s.ToTable("Sismografos");
-                s.HasKey(x => x.Id);
-
-                s.HasOne(x => x.Estacion)
-                 .WithMany()
-                 .HasForeignKey(x => x.EstacionId)
-                 .OnDelete(DeleteBehavior.Restrict);
+                entity.Property<Guid>("Id").HasColumnName("SismografoId");
+                entity.HasKey("Id");
+                entity.Property<Guid>("EstacionId");
+                entity.HasOne(s => s.Estacion)
+                      .WithMany(es => es.Sismografos)
+                      .HasForeignKey("EstacionId");
             });
 
-            mb.Entity<EmpleadoEF>(e =>
+            // --- SerieTemporal ---
+            modelBuilder.Entity<E.SerieTemporalEF>(entity =>
             {
-                e.HasOne(x => x.Usuario)
-                 .WithOne(u => u.Empleado)
-                 .HasForeignKey<EmpleadoEF>(x => x.UsuarioId)
-                 .OnDelete(DeleteBehavior.Restrict);
+                entity.Property<Guid>("Id").HasColumnName("SerieTemporalId");
+                entity.HasKey("Id");
+
+                // CORRECCIÓN: Usamos el nombre de propiedad de navegación real: .Evento
+                entity.Property<Guid>("EventoSismicoId");
+                entity.HasOne(s => s.Evento) // <--- CORRECCIÓN (Era .EventoSismico)
+                      .WithMany(e => e.SeriesTemporales)
+                      .HasForeignKey("EventoSismicoId");
             });
+
+            // --- MuestraSismica ---
+            modelBuilder.Entity<E.MuestraSismicaEF>(entity =>
+            {
+                entity.Property<Guid>("Id").HasColumnName("MuestraSismicaId");
+                entity.HasKey("Id");
+
+                // CORRECCIÓN: Usamos el nombre de propiedad de navegación real: .Serie
+                entity.Property<Guid>("SerieTemporalId");
+                entity.HasOne(m => m.Serie) // <--- CORRECCIÓN (Era .SerieTemporal)
+                      .WithMany(s => s.Muestras)
+                      .HasForeignKey("SerieTemporalId");
+            });
+
+            // --- DetalleMuestraSismica ---
+            modelBuilder.Entity<E.DetalleMuestraSismicaEF>(entity =>
+            {
+                entity.Property<Guid>("Id").HasColumnName("DetalleMuestraSismicaId");
+                entity.HasKey("Id");
+
+                // CORRECCIÓN: Usamos el nombre de propiedad de navegación real: .Muestra
+                entity.Property<Guid>("MuestraSismicaId");
+                entity.HasOne(d => d.Muestra) // <--- CORRECCIÓN (Era .MuestraSismica)
+                      .WithMany(m => m.Detalles)
+                      .HasForeignKey("MuestraSismicaId");
+
+                entity.HasOne(d => d.TipoDeDato).WithMany().IsRequired();
+            });
+
+            base.OnModelCreating(modelBuilder);
         }
     }
 }
